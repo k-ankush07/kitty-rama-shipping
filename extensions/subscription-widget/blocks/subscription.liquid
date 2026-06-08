@@ -1,0 +1,173 @@
+{% if product.selling_plan_groups.size > 0 %}
+<div class="sub-widget" style="margin: 16px 0; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px;">
+  <div style="font-weight: 600; margin-bottom: 12px;">🔄 Subscribe & Save</div>
+  
+  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 8px;">
+    <input type="radio" name="sub_option_{{ product.id }}" value="onetime" checked />
+    <span>One-time purchase</span>
+  </label>
+
+  {% for group in product.selling_plan_groups %}
+    {% if product.selling_plan_groups.size > 1 %}
+      <div style="font-size: 13px; color: #6b7280; margin: 10px 0 4px; font-weight: 600;">
+        {{ group.name }}
+      </div>
+    {% endif %}
+
+    {% for plan in group.selling_plans %}
+    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 8px;">
+      <input type="radio" name="sub_option_{{ product.id }}" value="{{ plan.id }}" data-selling-plan="{{ plan.id }}" />
+      <span>
+        {{ plan.name }}
+        {% for adjustment in plan.price_adjustments %}
+          {% if adjustment.value_type == 'percentage' %}
+            — <strong style="color: #10b981;">Save {{ adjustment.value }}%</strong>
+          {% endif %}
+        {% endfor %}
+      </span>
+    </label>
+    {% endfor %}
+  {% endfor %}
+</div>
+
+<script>
+(function() {
+  var originalFetch = window.fetch;
+  window.fetch = function(url, options) {
+    if (url && url.toString().includes('/cart/add')) {
+      var productId = '{{ product.id }}';
+      var checkedRadio = document.querySelector('input[name="sub_option_' + productId + '"]:checked');
+
+      if (checkedRadio && checkedRadio.dataset.sellingPlan) {
+        var planId = checkedRadio.dataset.sellingPlan;
+        console.log('[SubWidget] Intercepted /cart/add, plan:', planId);
+
+        if (options && options.body) {
+          if (options.body instanceof FormData) {
+            options.body.delete('selling_plan');
+            options.body.append('selling_plan', planId);
+            console.log('[SubWidget] Appended to FormData:', planId);
+          } else if (typeof options.body === 'string') {
+            try {
+              var parsed = JSON.parse(options.body);
+              parsed.selling_plan = parseInt(planId);
+              options.body = JSON.stringify(parsed);
+              console.log('[SubWidget] Patched JSON body:', parsed);
+            } catch(e) {
+              console.warn('[SubWidget] Could not parse JSON body:', e);
+            }
+          } else if (options.body instanceof URLSearchParams) {
+            options.body.set('selling_plan', planId);
+            console.log('[SubWidget] Patched URLSearchParams:', planId);
+          }
+        } else {
+          if (!options) options = {};
+          var fd = new FormData();
+          fd.append('selling_plan', planId);
+          options.body = fd;
+          console.log('[SubWidget] Created new FormData with plan:', planId);
+        }
+      } else {
+        if (options && options.body) {
+          if (options.body instanceof FormData) {
+            options.body.delete('selling_plan');
+          } else if (typeof options.body === 'string') {
+            try {
+              var p = JSON.parse(options.body);
+              delete p.selling_plan;
+              options.body = JSON.stringify(p);
+            } catch(e) {}
+          } else if (options.body instanceof URLSearchParams) {
+            options.body.delete('selling_plan');
+          }
+        }
+        console.log('[SubWidget] One-time purchase, selling_plan cleared');
+      }
+    }
+    return originalFetch.apply(this, arguments);
+  };
+
+  var originalOpen = XMLHttpRequest.prototype.open;
+  var originalSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this._subwidget_url = url;
+    return originalOpen.apply(this, arguments);
+  };
+
+  XMLHttpRequest.prototype.send = function(body) {
+    if (this._subwidget_url && this._subwidget_url.includes('/cart/add')) {
+      var productId = '{{ product.id }}';
+      var checkedRadio = document.querySelector('input[name="sub_option_' + productId + '"]:checked');
+
+      if (checkedRadio && checkedRadio.dataset.sellingPlan) {
+        var planId = checkedRadio.dataset.sellingPlan;
+        if (body instanceof FormData) {
+          body.delete('selling_plan');
+          body.append('selling_plan', planId);
+          console.log('[SubWidget] XHR FormData patched:', planId);
+        } else if (typeof body === 'string') {
+          try {
+            var parsed = JSON.parse(body);
+            parsed.selling_plan = parseInt(planId);
+            body = JSON.stringify(parsed);
+            console.log('[SubWidget] XHR JSON patched:', parsed);
+          } catch(e) {}
+        } else if (body instanceof URLSearchParams) {
+          body.set('selling_plan', planId);
+          console.log('[SubWidget] XHR URLSearchParams patched:', planId);
+        }
+      } else {
+        if (body instanceof FormData) {
+          body.delete('selling_plan');
+        } else if (typeof body === 'string') {
+          try {
+            var p = JSON.parse(body);
+            delete p.selling_plan;
+            body = JSON.stringify(p);
+          } catch(e) {}
+        } else if (body instanceof URLSearchParams) {
+          body.delete('selling_plan');
+        }
+      }
+    }
+    return originalSend.call(this, body);
+  };
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var productId = '{{ product.id }}';
+    var form = document.querySelector('form[action*="/cart/add"]');
+    var radios = document.querySelectorAll('input[name="sub_option_' + productId + '"]');
+
+    radios.forEach(function(radio) {
+      radio.addEventListener('change', function() {
+        if (form) {
+          var existing = form.querySelector('input[name="selling_plan"]');
+          if (existing) existing.remove();
+          if (this.dataset.sellingPlan) {
+            var inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = 'selling_plan';
+            inp.value = this.dataset.sellingPlan;
+            form.appendChild(inp);
+            console.log('[SubWidget] Hidden input set:', this.dataset.sellingPlan);
+          } else {
+            console.log('[SubWidget] One-time selected, hidden input cleared');
+          }
+        }
+      });
+    });
+  });
+
+})();
+</script>
+
+{% endif %}
+
+{% schema %}
+{
+  "name": "Subscription Widget",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}
