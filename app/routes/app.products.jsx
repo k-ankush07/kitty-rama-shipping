@@ -61,6 +61,7 @@ export async function action({ request }) {
     `, { variables: { id: planGroupId, productIds: [productId] } });
 
     const data = await res.json();
+    console.log("response:", JSON.stringify(data, null, 2));
     if (data.data.sellingPlanGroupAddProducts.userErrors.length > 0) {
       return { error: data.data.sellingPlanGroupAddProducts.userErrors[0].message };
     }

@@ -1,45 +1,46 @@
 import { useLoaderData, useActionData, Form, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useAppBridge } from "@shopify/app-bridge-react";
+
+// ─── Loader ────────────────────────────────────────────────────────────────────
 
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
 
   const res = await admin.graphql(`
     query {
-  sellingPlanGroups(first: 20) {
-    edges {
-      node {
-        id
-        name
-        merchantCode
-        products(first: 1) {
-          edges {
-            node {
-              id
+      sellingPlanGroups(first: 20) {
+        edges {
+          node {
+            id
+            name
+            merchantCode
+            products(first: 5) {
+              edges { node { id title featuredImage { url } } }
+              pageInfo { hasNextPage }
             }
-          }
-          pageInfo {
-            hasNextPage
-          }
-        }
-        sellingPlans(first: 10) {
-          edges {
-            node {
-              id
-              name
-              billingPolicy {
-                ... on SellingPlanRecurringBillingPolicy {
-                  interval
-                  intervalCount
-                }
-              }
-              pricingPolicies {
-                ... on SellingPlanFixedPricingPolicy {
-                  adjustmentType
-                  adjustmentValue {
-                    ... on SellingPlanPricingPolicyPercentageValue {
-                      percentage
+            sellingPlans(first: 10) {
+              edges {
+                node {
+                  id
+                  name
+                  billingPolicy {
+                    ... on SellingPlanRecurringBillingPolicy {
+                      interval
+                      intervalCount
+                      minCycles
+                      maxCycles
+                    }
+                  }
+                  pricingPolicies {
+                    ... on SellingPlanFixedPricingPolicy {
+                      adjustmentType
+                      adjustmentValue {
+                        ... on SellingPlanPricingPolicyPercentageValue {
+                          percentage
+                        }
+                      }
                     }
                   }
                 }
@@ -49,70 +50,154 @@ export async function loader({ request }) {
         }
       }
     }
-  }
-}
   `);
 
   const data = await res.json();
   return { sellingPlanGroups: data.data.sellingPlanGroups.edges.map((e) => e.node) };
 }
 
+// ─── Action ────────────────────────────────────────────────────────────────────
+
 export async function action({ request }) {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
- if (intent === "create") {
-  const name = formData.get("name");
-  const interval = formData.get("interval");
-  const intervalCount = parseInt(formData.get("intervalCount"));
-  const discount = parseFloat(formData.get("discount"));
+  // ── Create plan ──
+  if (intent === "create") {
+    const name = formData.get("name");
+    const interval = formData.get("interval");
+    const intervalCount = parseInt(formData.get("intervalCount"));
+    const discount = parseFloat(formData.get("discount") || "0");
+    const billingType = formData.get("billingType") || "DEFAULT";
+    const minCycles = parseInt(formData.get("minCycles") || "0");
+    const maxCycles = parseInt(formData.get("maxCycles") || "0");
 
-  const { session } = await authenticate.admin(request);
+    const tieredDiscount = formData.get("tieredDiscount") === "true";
+    const tieredDiscountValue = parseFloat(formData.get("tieredDiscountValue") || "0");
+    const tieredDiscountAfter = parseInt(formData.get("tieredDiscountAfter") || "1");
+    const tieredDiscountType = formData.get("tieredDiscountType") || "PERCENTAGE";
 
-  const query = `
-  mutation {
-    sellingPlanGroupCreate(input: {
-      name: ${JSON.stringify(name)}
-      merchantCode: ${JSON.stringify(name.toLowerCase().replace(/\s/g, "-"))}
-      options: ["Delivery every"]
-      sellingPlansToCreate: [{
-        name: "Every ${intervalCount} ${interval.toLowerCase()}"
-        category: SUBSCRIPTION
-        options: ["${intervalCount} ${interval}"]
-        billingPolicy: { recurring: { interval: ${interval.toUpperCase()}, intervalCount: ${intervalCount} } }
-        deliveryPolicy: { recurring: { interval: ${interval.toUpperCase()}, intervalCount: ${intervalCount} } }
-        ${discount > 0 ? `pricingPolicies: [{ fixed: { adjustmentType: PERCENTAGE, adjustmentValue: { percentage: ${discount} } } }]` : ""}
-      }]
-    }, resources: {}) {
-      sellingPlanGroup { id name }
-      userErrors { field message }
+    const allowAutomaticActions = formData.get("allowAutomaticActions") === "true";
+
+    let automaticActions = [];
+    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) {}
+
+    // Selected product IDs to assign after creation
+    let selectedProductIds = [];
+    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) {}
+
+    const pricingPolicies = [];
+    if (discount > 0) {
+      pricingPolicies.push({
+        fixed: { adjustmentType: "PERCENTAGE", adjustmentValue: { percentage: discount } },
+      });
     }
-  }
-`;
+    if (tieredDiscount && tieredDiscountValue > 0) {
+      pricingPolicies.push({
+        cycleDiscounts: {
+          afterCycle: tieredDiscountAfter,
+          adjustmentType: tieredDiscountType,
+          adjustmentValue: { percentage: tieredDiscountValue },
+        },
+      });
+    }
 
+    const isPrePaid = billingType === "PRE_PAID";
 
-  const res = await fetch(
-    `https://${session.shop}/admin/api/2025-10/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": session.accessToken,
+    const billingPolicy = isPrePaid
+      ? { fixed: { checkoutCharge: { type: "PERCENTAGE", value: { percentage: 100 } }, remainingBalanceChargeTrigger: "NO_REMAINING_BALANCE" } }
+      : { recurring: { interval, intervalCount, ...(minCycles > 0 && { minCycles }), ...(maxCycles > 0 && { maxCycles }) } };
+
+    const sellingPlanInput = {
+      name: `Every ${intervalCount} ${interval.toLowerCase()}`,
+      category: "SUBSCRIPTION",
+      options: [`${intervalCount} ${interval}`],
+      billingPolicy,
+      deliveryPolicy: isPrePaid
+        ? { fixed: { fulfillmentTrigger: "ASAP" } }
+        : { recurring: { interval, intervalCount } },
+      ...(pricingPolicies.length > 0 && { pricingPolicies }),
+    };
+
+    const query = `
+      mutation CreateSellingPlanGroup($input: SellingPlanGroupInput!, $resources: SellingPlanGroupResourceInput!) {
+        sellingPlanGroupCreate(input: $input, resources: $resources) {
+          sellingPlanGroup { id name }
+          userErrors { field message }
+        }
+      }
+    `;
+
+    const variables = {
+      input: {
+        name,
+        merchantCode: name.toLowerCase().replace(/\s+/g, "-"),
+        options: ["Delivery every"],
+        sellingPlansToCreate: [sellingPlanInput],
       },
-      body: JSON.stringify({ query }),
+      resources: {},
+    };
+
+    const res = await fetch(`https://${session.shop}/admin/api/2025-10/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const data = await res.json();
+    if (data.errors) return { error: data.errors[0].message };
+    if (data.data.sellingPlanGroupCreate.userErrors.length > 0) {
+      return { error: data.data.sellingPlanGroupCreate.userErrors[0].message };
     }
-  );
 
-  const data = await res.json();
-  console.log("RESPONSE:", JSON.stringify(data, null, 2));
-  if (data.errors) return { error: data.errors[0].message };
-  if (data.data.sellingPlanGroupCreate.userErrors.length > 0) {
-    return { error: data.data.sellingPlanGroupCreate.userErrors[0].message };
+    const newGroupId = data.data.sellingPlanGroupCreate.sellingPlanGroup.id;
+
+    // Assign selected products if any
+    if (selectedProductIds.length > 0) {
+      await fetch(`https://${session.shop}/admin/api/2025-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
+        body: JSON.stringify({
+          query: `mutation sellingPlanGroupAddProducts($id: ID!, $productIds: [ID!]!) {
+            sellingPlanGroupAddProducts(id: $id, productIds: $productIds) {
+              sellingPlanGroup { id }
+              userErrors { field message }
+            }
+          }`,
+          variables: { id: newGroupId, productIds: selectedProductIds },
+        }),
+      });
+    }
+
+    return { success: `Plan created successfully!${selectedProductIds.length > 0 ? ` ${selectedProductIds.length} product(s) assigned.` : ""}`, automaticActions, allowAutomaticActions };
   }
-  return { success: "Plan created successfully!" };
-}
 
+  // ── Assign product to existing plan ──
+  if (intent === "assignProduct") {
+    const planGroupId = formData.get("planGroupId");
+    let productIds = [];
+    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) {}
+
+    if (productIds.length === 0) return { error: "No products selected." };
+
+    const res = await admin.graphql(`
+      mutation sellingPlanGroupAddProducts($id: ID!, $productIds: [ID!]!) {
+        sellingPlanGroupAddProducts(id: $id, productIds: $productIds) {
+          sellingPlanGroup { id name }
+          userErrors { field message }
+        }
+      }
+    `, { variables: { id: planGroupId, productIds } });
+
+    const data = await res.json();
+    if (data.data.sellingPlanGroupAddProducts.userErrors.length > 0) {
+      return { error: data.data.sellingPlanGroupAddProducts.userErrors[0].message };
+    }
+    return { success: `${productIds.length} product(s) assigned to plan!` };
+  }
+
+  // ── Delete plan ──
   if (intent === "delete") {
     const planGroupId = formData.get("planGroupId");
     await admin.graphql(`
@@ -129,6 +214,569 @@ export async function action({ request }) {
   return {};
 }
 
+// ─── Action type definitions ───────────────────────────────────────────────────
+
+const ACTION_MENU = [
+  {
+    group: "Swap to different product(s)",
+    items: [
+      { type: "PRODUCT_SWAP", label: "Add product swap" },
+      { type: "VARIANT_SWAP", label: "Add variant swap" },
+    ],
+  },
+  {
+    group: "Add product to subscription",
+    items: [{ type: "ADD_PRODUCT", label: "Add product" }],
+  },
+  {
+    group: "Remove from subscription",
+    items: [
+      { type: "REMOVE_PRODUCT", label: "Remove product" },
+      { type: "REMOVE_VARIANT", label: "Remove specific variant" },
+    ],
+  },
+];
+
+const ACTION_LABELS = {
+  PRODUCT_SWAP: "Product swap",
+  VARIANT_SWAP: "Variant swap",
+  ADD_PRODUCT: "Add product",
+  REMOVE_PRODUCT: "Remove product",
+  REMOVE_VARIANT: "Remove specific variant",
+};
+
+const ACTION_DESCRIPTIONS = {
+  PRODUCT_SWAP: "Swap to a different product after a set number of orders",
+  VARIANT_SWAP: "Swap to a different variant after a set number of orders",
+  ADD_PRODUCT: "Add a product to the subscription after a set number of orders",
+  REMOVE_PRODUCT: "Remove a product from the subscription after a set number of orders",
+  REMOVE_VARIANT: "Remove a specific variant from the subscription after a set number of orders",
+};
+
+const ACTION_ICONS = {
+  PRODUCT_SWAP: "🔄",
+  VARIANT_SWAP: "↔️",
+  ADD_PRODUCT: "➕",
+  REMOVE_PRODUCT: "🗑",
+  REMOVE_VARIANT: "✂️",
+};
+
+const NEEDS_VARIANT_PICKER = ["VARIANT_SWAP", "REMOVE_VARIANT"];
+
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
+function SectionCard({ title, children }) {
+  return (
+    <div style={s.card}>
+      {title && <h3 style={s.cardTitle}>{title}</h3>}
+      {children}
+    </div>
+  );
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <div style={s.field}>
+      <label style={s.label}>{label}</label>
+      {children}
+      {hint && <p style={s.hint}>{hint}</p>}
+    </div>
+  );
+}
+
+function Toggle({ id, name, label, description, checked, onChange }) {
+  return (
+    <label style={s.toggleRow} htmlFor={id}>
+      <input
+        id={id} type="checkbox" name={name} defaultChecked={checked} onChange={onChange}
+        style={{ accentColor: "#4f46e5", width: 16, height: 16, flexShrink: 0, marginTop: 2 }}
+      />
+      <div>
+        <div style={{ fontWeight: 500, fontSize: 14 }}>{label}</div>
+        {description && <div style={s.hint}>{description}</div>}
+      </div>
+    </label>
+  );
+}
+
+function SelectField({ label, name, options, defaultValue }) {
+  return (
+    <Field label={label}>
+      <select name={name} defaultValue={defaultValue} style={s.input}>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </Field>
+  );
+}
+
+function NumberSelect({ label, name, min, max, disabledLabel, defaultValue }) {
+  const options = [];
+  if (disabledLabel) options.push(<option key={0} value={0}>{disabledLabel}</option>);
+  for (let i = min; i <= max; i++) options.push(<option key={i} value={i}>{i}</option>);
+  return (
+    <Field label={label}>
+      <select name={name} defaultValue={defaultValue ?? 0} style={s.input}>{options}</select>
+    </Field>
+  );
+}
+
+// ─── Product Picker Button (reusable) ─────────────────────────────────────────
+
+function ProductPickerButton({ selectedProducts, onSelect, multiple = true, label = "Select products" }) {
+  const shopify = useAppBridge();
+
+  const openPicker = async () => {
+    const selected = await shopify.resourcePicker({
+      type: "product",
+      multiple,
+      selectionIds: selectedProducts.map((p) => ({ id: p.id })),
+    });
+    if (!selected) return;
+    onSelect(selected.map((p) => ({
+      id: p.id,
+      title: p.title,
+      image: p.images?.[0]?.originalSrc || p.featuredImage?.originalSrc,
+    })));
+  };
+
+  return (
+    <div>
+      {selectedProducts.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+          {selectedProducts.map((p) => (
+            <div key={p.id} style={s.selectedProduct}>
+              {p.image && (
+                <img src={p.image} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 5, border: "1px solid #e5e7eb" }} />
+              )}
+              <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "#111827" }}>{p.title}</div>
+              <button
+                type="button"
+                style={{ ...s.changeProductBtn, color: "#991b1b" }}
+                onClick={() => onSelect(selectedProducts.filter((x) => x.id !== p.id))}
+              >✕</button>
+            </div>
+          ))}
+          <button type="button" style={s.selectProductBtn} onClick={openPicker}>
+            + Add more products
+          </button>
+        </div>
+      ) : (
+        <button type="button" style={s.selectProductBtn} onClick={openPicker}>
+          🔍 {label}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Add Action dropdown ───────────────────────────────────────────────────────
+
+function AddActionDropdown({ onAdd }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div style={{ position: "relative", display: "inline-block" }} ref={ref}>
+      <button type="button" style={s.addActionBtn} onClick={() => setOpen((v) => !v)}>
+        <span style={{ fontSize: 16, lineHeight: 1 }}>＋</span>
+        <span>Add action</span>
+        <span style={{ fontSize: 10, marginLeft: 2 }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div style={s.dropdown}>
+          {ACTION_MENU.map((group) => (
+            <div key={group.group}>
+              <div style={s.dropdownGroup}>{group.group}</div>
+              {group.items.map((item) => (
+                <button
+                  key={item.type} type="button" style={s.dropdownItem}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  onClick={() => { onAdd(item.type); setOpen(false); }}
+                >
+                  {ACTION_ICONS[item.type]} {item.label}
+                </button>
+              ))}
+              <div style={s.dropdownDivider} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Action Row ───────────────────────────────────────────────────────────────
+
+function ActionRow({ action, index, onChange, onRemove }) {
+  const shopify = useAppBridge();
+  const needsVariant = NEEDS_VARIANT_PICKER.includes(action.type);
+  const hasProduct = action.productTitle || action.variantTitle;
+
+  const openPicker = async () => {
+    const selected = await shopify.resourcePicker({
+      type: needsVariant ? "variant" : "product",
+      multiple: false,
+      selectionIds: action.productId ? [{ id: action.productId }] : [],
+    });
+    if (!selected || selected.length === 0) return;
+
+    if (needsVariant) {
+      const variant = selected[0];
+      onChange(index, {
+        ...action,
+        productId: variant.product?.id,
+        productTitle: variant.product?.title,
+        variantId: variant.id,
+        variantTitle: variant.displayName || variant.title,
+        variantImage: variant.image?.originalSrc || variant.product?.featuredImage?.originalSrc,
+      });
+    } else {
+      const product = selected[0];
+      onChange(index, {
+        ...action,
+        productId: product.id,
+        productTitle: product.title,
+        productImage: product.images?.[0]?.originalSrc,
+        variantId: undefined,
+        variantTitle: undefined,
+        variantImage: undefined,
+      });
+    }
+  };
+
+  return (
+    <div style={s.actionRow}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, width: "100%" }}>
+        <div style={s.actionRowLeft}>
+          <span style={s.actionIcon}>{ACTION_ICONS[action.type]}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{ACTION_LABELS[action.type]}</div>
+            <div style={s.hint}>{ACTION_DESCRIPTIONS[action.type]}</div>
+
+            {/* Product / variant picker */}
+            {hasProduct ? (
+              <div style={s.selectedProduct}>
+                {(action.productImage || action.variantImage) && (
+                  <img
+                    src={action.variantImage || action.productImage} alt=""
+                    style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6, border: "1px solid #e5e7eb" }}
+                  />
+                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "#111827" }}>{action.productTitle}</div>
+                  {action.variantTitle && <div style={{ fontSize: 11, color: "#6b7280" }}>{action.variantTitle}</div>}
+                </div>
+                <button type="button" style={s.changeProductBtn} onClick={openPicker}>Change</button>
+              </div>
+            ) : (
+              <button type="button" style={{ ...s.selectProductBtn, marginTop: 8 }} onClick={openPicker}>
+                {needsVariant ? "🔍 Select variant" : "🔍 Select product"}
+              </button>
+            )}
+
+            {/* After # orders */}
+            <div style={{ marginTop: 10 }}>
+              <label style={{ ...s.label, display: "block", marginBottom: 4 }}>After # of orders</label>
+              <input
+                type="number" min={1} value={action.afterCycle || 1}
+                style={{ ...s.input, width: 100 }}
+                onChange={(e) => onChange(index, { ...action, afterCycle: parseInt(e.target.value) || 1 })}
+              />
+            </div>
+          </div>
+        </div>
+        <button type="button" style={s.removeActionBtn} onClick={() => onRemove(index)} title="Remove">✕</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Assign Products to Existing Plan ─────────────────────────────────────────
+
+function AssignProductsPanel({ group }) {
+  const [open, setOpen] = useState(false);
+  const [selectedProducts, setSelectedProducts] = useState([]);
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting";
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button type="button" style={s.assignProductsBtn} onClick={() => setOpen((v) => !v)}>
+        {open ? "▲ Hide" : "📦 Assign Products"}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, padding: 14, background: "#f9fafb", borderRadius: 10, border: "1px solid #e5e7eb" }}>
+          {/* Existing products */}
+          {group.products.edges.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Currently assigned
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {group.products.edges.map(({ node: p }) => (
+                  <div key={p.id} style={s.assignedProductChip}>
+                    {p.featuredImage && (
+                      <img src={p.featuredImage.url} alt="" style={{ width: 20, height: 20, borderRadius: 3, objectFit: "cover" }} />
+                    )}
+                    <span style={{ fontSize: 12 }}>{p.title}</span>
+                  </div>
+                ))}
+                {group.products.pageInfo.hasNextPage && (
+                  <span style={{ ...s.badge("gray"), fontSize: 11 }}>+ more</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Picker */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "#374151", marginBottom: 6 }}>Add products to this plan</div>
+            <ProductPickerButton
+              selectedProducts={selectedProducts}
+              onSelect={setSelectedProducts}
+              label="Select products to assign"
+            />
+          </div>
+
+          {selectedProducts.length > 0 && (
+            <Form method="post">
+              <input type="hidden" name="intent" value="assignProduct" />
+              <input type="hidden" name="planGroupId" value={group.id} />
+              <input type="hidden" name="productIds" value={JSON.stringify(selectedProducts.map((p) => p.id))} />
+              <button
+                type="submit"
+                style={{ ...s.submitBtn, padding: "8px 16px", fontSize: 13 }}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Assigning…" : `Assign ${selectedProducts.length} product(s)`}
+              </button>
+            </Form>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Create Plan Form ─────────────────────────────────────────────────────────
+
+function CreatePlanForm({ onCancel, isSubmitting }) {
+  const [tieredDiscount, setTieredDiscount] = useState(false);
+  const [shippingDiscount, setShippingDiscount] = useState(false);
+  const [quantityChange, setQuantityChange] = useState(false);
+  const [setMinQuantity, setSetMinQuantity] = useState(false);
+  const [allowAutomaticActions, setAllowAutomaticActions] = useState(false);
+  const [automaticActions, setAutomaticActions] = useState([]);
+  const [selectedProducts, setSelectedProducts] = useState([]);
+
+  const addAction = (type) => setAutomaticActions((prev) => [...prev, { type, afterCycle: 1 }]);
+  const updateAction = (index, updated) => setAutomaticActions((prev) => prev.map((a, i) => (i === index ? updated : a)));
+  const removeAction = (index) => setAutomaticActions((prev) => prev.filter((_, i) => i !== index));
+
+  return (
+    <Form method="post">
+      <input type="hidden" name="intent" value="create" />
+      <input type="hidden" name="tieredDiscount" value={tieredDiscount ? "true" : "false"} />
+      <input type="hidden" name="shippingDiscount" value={shippingDiscount ? "true" : "false"} />
+      <input type="hidden" name="quantityChange" value={quantityChange ? "true" : "false"} />
+      <input type="hidden" name="setMinQuantity" value={setMinQuantity ? "true" : "false"} />
+      <input type="hidden" name="allowAutomaticActions" value={allowAutomaticActions ? "true" : "false"} />
+      <input type="hidden" name="automaticActions" value={JSON.stringify(automaticActions)} />
+      <input type="hidden" name="selectedProductIds" value={JSON.stringify(selectedProducts.map((p) => p.id))} />
+
+      {/* ── Plan Details ── */}
+      <SectionCard title="Plan Details">
+        <div style={s.grid2}>
+          <Field label="Plan Title" hint="Customers will see this on the storefront.">
+            <input name="name" style={s.input} placeholder="e.g. Subscribe & Save" required />
+          </Field>
+          <SelectField
+            label="Billing Type" name="billingType" defaultValue="DEFAULT"
+            options={[{ value: "DEFAULT", label: "Pay as you go" }, { value: "PRE_PAID", label: "Pre-paid" }]}
+          />
+        </div>
+        <div style={s.grid3}>
+          <SelectField
+            label="Billing Interval" name="interval" defaultValue="MONTH"
+            options={[{ value: "DAY", label: "Days" }, { value: "WEEK", label: "Weeks" }, { value: "MONTH", label: "Months" }, { value: "YEAR", label: "Years" }]}
+          />
+          <Field label="Interval Count">
+            <input name="intervalCount" type="number" defaultValue={1} min={1} style={s.input} required />
+          </Field>
+          <Field label="Subscription Discount (%)">
+            <input name="discount" type="number" defaultValue={0} min={0} max={100} style={s.input} />
+          </Field>
+        </div>
+      </SectionCard>
+
+      {/* ── Assign Products at creation ── */}
+      <SectionCard title="Assign Products">
+        <p style={{ ...s.hint, marginBottom: 10 }}>
+          Optionally assign products to this plan right away. You can also do this later from the plan card.
+        </p>
+        <ProductPickerButton
+          selectedProducts={selectedProducts}
+          onSelect={setSelectedProducts}
+          label="Select products for this plan"
+        />
+      </SectionCard>
+
+      {/* ── Subscription Orders ── */}
+      <SectionCard title="Subscription Orders">
+        <div style={s.grid2}>
+          <NumberSelect label="Minimum number of orders" name="minCycles" min={1} max={250} disabledLabel="Disabled" />
+          <NumberSelect label="Maximum number of orders" name="maxCycles" min={1} max={250} disabledLabel="Unlimited" />
+        </div>
+      </SectionCard>
+
+      {/* ── Subscription Discount ── */}
+      <SectionCard title="Subscription Discount">
+        <Toggle
+          id="tieredDiscountToggle"
+          label="Change discount after specific number of orders"
+          description="Apply a different discount rate after a set number of orders."
+          checked={tieredDiscount}
+          onChange={(e) => setTieredDiscount(e.target.checked)}
+        />
+        {tieredDiscount && (
+          <div style={{ ...s.grid3, marginTop: 12 }}>
+            <Field label="New Discount Amount">
+              <input name="tieredDiscountValue" type="number" defaultValue={0} min={0} max={100} style={s.input} />
+            </Field>
+            <Field label="After # of orders">
+              <input name="tieredDiscountAfter" type="number" defaultValue={1} min={1} style={s.input} />
+            </Field>
+            <SelectField
+              label="Discount Type" name="tieredDiscountType" defaultValue="PERCENTAGE"
+              options={[{ value: "PERCENTAGE", label: "Percentage off" }, { value: "FIXED_AMOUNT", label: "Amount off" }, { value: "PRICE", label: "Fixed price" }]}
+            />
+          </div>
+        )}
+      </SectionCard>
+
+      {/* ── Shipping Discount ── */}
+      <SectionCard title="Shipping Discount">
+        <Toggle
+          id="shippingDiscountToggle"
+          label="Give shipping discount"
+          description="Override delivery price after a certain number of orders."
+          checked={shippingDiscount}
+          onChange={(e) => setShippingDiscount(e.target.checked)}
+        />
+        {shippingDiscount && (
+          <div style={{ ...s.grid3, marginTop: 12 }}>
+            <Field label="Discount Amount" hint="This will be the new delivery price">
+              <input name="shippingDiscountValue" type="number" defaultValue={0} min={0} style={s.input} />
+            </Field>
+            <Field label="After # of orders" hint="After how many orders to change delivery price">
+              <input name="shippingDiscountAfter" type="number" defaultValue={1} min={0} style={s.input} />
+            </Field>
+            <SelectField
+              label="Discount Type" name="shippingDiscountType" defaultValue="PRICE"
+              options={[{ value: "PERCENTAGE", label: "Percentage off" }, { value: "FIXED_AMOUNT", label: "Amount off" }, { value: "PRICE", label: "Fixed price" }]}
+            />
+          </div>
+        )}
+      </SectionCard>
+
+      {/* ── Quantity Settings ── */}
+      <SectionCard title="Quantity Settings">
+        <Toggle
+          id="quantityChangeToggle"
+          label="Change product quantity after specific number of orders"
+          description="This setting applies to selected products for both new and recurring subscription orders."
+          checked={quantityChange}
+          onChange={(e) => setQuantityChange(e.target.checked)}
+        />
+        {quantityChange && (
+          <div style={{ ...s.grid2, marginTop: 12 }}>
+            <Field label="Quantity" hint="Quantity will not be greater than the initial order quantity">
+              <input name="quantityChangeValue" type="number" defaultValue={1} min={0} style={s.input} />
+            </Field>
+            <Field label="After # of orders" hint="After how many orders to change quantity">
+              <input name="quantityChangeAfter" type="number" defaultValue={1} min={1} style={s.input} />
+            </Field>
+          </div>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <Toggle
+            id="setMinQuantityToggle"
+            label="Set minimum quantity for this plan"
+            description="When this plan is selected, product quantity will automatically be set to this value and customers cannot select a lower quantity."
+            checked={setMinQuantity}
+            onChange={(e) => setSetMinQuantity(e.target.checked)}
+          />
+          {setMinQuantity && (
+            <div style={{ marginTop: 12, maxWidth: 200 }}>
+              <Field label="Minimum Quantity">
+                <input name="minQuantity" type="number" defaultValue={1} min={1} style={s.input} />
+              </Field>
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+      {/* ── Automatic Actions ── */}
+      <SectionCard title="Automatic Actions">
+        <Toggle
+          id="automaticActionsToggle"
+          label="Allow automatic actions (swap, add or remove products)"
+          description="Automatic actions can change the subscription price. The price updates to the replacement product's price at the time of the swap."
+          checked={allowAutomaticActions}
+          onChange={(e) => { setAllowAutomaticActions(e.target.checked); if (!e.target.checked) setAutomaticActions([]); }}
+        />
+        {allowAutomaticActions && (
+          <div style={{ marginTop: 16 }}>
+            <div style={s.infoBanner}>
+              ℹ️ Automatic actions can change the subscription price. The price updates to the replacement product's price at the time of the swap.
+            </div>
+            {automaticActions.length > 0 && (
+              <div style={{ marginBottom: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                {automaticActions.map((action, i) => (
+                  <ActionRow key={i} action={action} index={i} onChange={updateAction} onRemove={removeAction} />
+                ))}
+              </div>
+            )}
+            <AddActionDropdown onAdd={addAction} />
+            {automaticActions.length === 0 && (
+              <p style={{ ...s.hint, marginTop: 8 }}>No automatic actions configured yet. Click "Add action" to add one.</p>
+            )}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* ── Customer Product Changes ── */}
+      <SectionCard title="Customer Product Changes">
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Toggle id="allowSwaps" name="allowSwaps" label="Allow product swaps" description="Customers can swap their current product to a different product in this selling plan group via the customer portal." checked={true} />
+          <Toggle id="allowVariantChanges" name="allowVariantChanges" label="Allow variant changes" description="Customers can change to a different variant of the same product (e.g., size, color)." checked={true} />
+          <Toggle id="allowQuantityChanges" name="allowQuantityChanges" label="Allow quantity changes" description="Customers can change the quantity of their subscription items." checked={true} />
+          <Toggle id="keepDiscounts" name="keepDiscounts" label="Keep discounts on product changes" description="Discounts and pricing policies will be preserved when customers swap products, change variants, or adjust quantities." checked={true} />
+        </div>
+      </SectionCard>
+
+      <div style={s.formActions}>
+        <button type="button" style={s.cancelBtn} onClick={onCancel}>Cancel</button>
+        <button type="submit" style={s.submitBtn} disabled={isSubmitting}>
+          {isSubmitting ? "Creating…" : "Create Plan"}
+        </button>
+      </div>
+    </Form>
+  );
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
+
 export default function PlansPage() {
   const { sellingPlanGroups } = useLoaderData();
   const actionData = useActionData();
@@ -138,116 +786,163 @@ export default function PlansPage() {
 
   return (
     <s-page heading="Selling Plans">
-      {actionData?.success && <div style={styles.alert("success")}>{actionData.success}</div>}
-      {actionData?.error && <div style={styles.alert("error")}>{actionData.error}</div>}
+      {actionData?.success && <div style={s.alert("success")}>{actionData.success}</div>}
+      {actionData?.error && <div style={s.alert("error")}>{actionData.error}</div>}
 
-      <div style={{ marginBottom: "20px" }}>
-        <button style={styles.primaryBtn} onClick={() => setShowForm(!showForm)}>
-          {showForm ? "✕ Cancel" : "+ Create New Plan"}
-        </button>
+      <div style={{ marginBottom: 20 }}>
+        {!showForm && (
+          <button style={s.primaryBtn} onClick={() => setShowForm(true)}>+ Create New Plan</button>
+        )}
       </div>
 
-      {showForm && (
-        <div style={styles.formCard}>
-          <h3 style={styles.formTitle}>Create Selling Plan</h3>
-          <Form method="post">
-            <input type="hidden" name="intent" value="create" />
-            <div style={styles.formGrid}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Plan Name</label>
-                <input style={styles.input} name="name" placeholder="e.g. Monthly Subscription" required />
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Billing Interval</label>
-                <select style={styles.input} name="interval" required>
-                  <option value="WEEK">Weekly</option>
-                  <option value="MONTH">Monthly</option>
-                  <option value="YEAR">Yearly</option>
-                  <option value="DAY">Custom (Days)</option>
-                </select>
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Interval Count</label>
-                <input style={styles.input} name="intervalCount" type="number" defaultValue={1} min={1} required />
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Discount (%)</label>
-                <input style={styles.input} name="discount" type="number" defaultValue={0} min={0} max={100} />
-              </div>
-            </div>
-            <button style={styles.submitBtn} type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Creating..." : "Create Plan"}
-            </button>
-          </Form>
-        </div>
-      )}
+      {showForm && <CreatePlanForm onCancel={() => setShowForm(false)} isSubmitting={isSubmitting} />}
 
-      <div style={styles.section}>
-        <h2 style={styles.sectionTitle}>All Selling Plan Groups ({sellingPlanGroups.length})</h2>
+      <SectionCard title={`All Selling Plan Groups (${sellingPlanGroups.length})`}>
         {sellingPlanGroups.length === 0 ? (
-          <div style={styles.empty}>No selling plans yet. Create your first one!</div>
+          <div style={s.empty}>No selling plans yet. Create your first one!</div>
         ) : (
           sellingPlanGroups.map((group) => (
-            <div key={group.id} style={styles.planCard}>
-              <div style={styles.planHeader}>
+            <div key={group.id} style={s.planCard}>
+              <div style={s.planHeader}>
                 <div>
-                  <h3 style={styles.planName}>{group.name}</h3>
-                  <span style={styles.planCode}>{group.merchantCode}</span>
-                  <span style={styles.productCount}>
+                  <h3 style={s.planName}>{group.name}</h3>
+                  <span style={s.badge("gray")}>{group.merchantCode}</span>
+                  <span style={s.badge("indigo")}>
                     {group.products.edges.length}{group.products.pageInfo.hasNextPage ? "+" : ""} products
                   </span>
                 </div>
                 <Form method="post">
                   <input type="hidden" name="intent" value="delete" />
                   <input type="hidden" name="planGroupId" value={group.id} />
-                  <button style={styles.deleteBtn} type="submit">🗑 Delete</button>
+                  <button style={s.deleteBtn} type="submit">🗑 Delete</button>
                 </Form>
               </div>
-              <div style={styles.plansInner}>
-                {group.sellingPlans.edges.map(({ node: plan }) => (
-                  <div key={plan.id} style={styles.planRow}>
-                    <span>📅 {plan.name}</span>
-                    <span style={styles.intervalBadge}>
-                      {plan.billingPolicy?.intervalCount} × {plan.billingPolicy?.interval}
-                    </span>
-                    {plan.pricingPolicies?.[0]?.adjustmentValue?.percentage > 0 && (
-                      <span style={styles.discountBadge}>
-                        -{plan.pricingPolicies[0].adjustmentValue.percentage}% off
-                      </span>
-                    )}
-                  </div>
-                ))}
+
+              {/* Selling plans list */}
+              <div style={s.plansInner}>
+                {group.sellingPlans.edges.map(({ node: plan }) => {
+                  const bp = plan.billingPolicy;
+                  const pricing = plan.pricingPolicies?.[0];
+                  const pct = pricing?.adjustmentValue?.percentage;
+                  return (
+                    <div key={plan.id} style={s.planRow}>
+                      <span>📅 {plan.name}</span>
+                      <span style={s.badge("blue")}>{bp?.intervalCount} × {bp?.interval}</span>
+                      {bp?.minCycles > 0 && <span style={s.badge("purple")}>min {bp.minCycles} orders</span>}
+                      {bp?.maxCycles > 0 && <span style={s.badge("orange")}>max {bp.maxCycles} orders</span>}
+                      {pct > 0 && <span style={s.badge("green")}>-{pct}% off</span>}
+                    </div>
+                  );
+                })}
               </div>
+
+              {/* Assign products panel */}
+              <AssignProductsPanel group={group} />
             </div>
           ))
         )}
-      </div>
+      </SectionCard>
     </s-page>
   );
 }
 
-const styles = {
-  alert: (type) => ({ padding: "12px 16px", borderRadius: "8px", marginBottom: "16px", background: type === "success" ? "#d1fae5" : "#fee2e2", color: type === "success" ? "#065f46" : "#991b1b", fontWeight: "500" }),
-  primaryBtn: { padding: "10px 20px", background: "#4f46e5", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600" },
-  formCard: { background: "white", borderRadius: "12px", padding: "24px", marginBottom: "24px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" },
-  formTitle: { fontSize: "18px", fontWeight: "600", marginBottom: "16px" },
-  formGrid: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px", marginBottom: "16px" },
-  formGroup: { display: "flex", flexDirection: "column", gap: "6px" },
-  label: { fontSize: "14px", fontWeight: "500", color: "#374151" },
-  input: { padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: "8px", fontSize: "14px" },
-  submitBtn: { padding: "12px 24px", background: "#10b981", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600" },
-  section: { background: "white", borderRadius: "12px", padding: "20px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
-  sectionTitle: { fontSize: "18px", fontWeight: "600", marginBottom: "16px" },
-  empty: { textAlign: "center", color: "#9ca3af", padding: "40px" },
-  planCard: { border: "1px solid #e5e7eb", borderRadius: "10px", padding: "16px", marginBottom: "12px" },
-  planHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" },
-  planName: { fontSize: "16px", fontWeight: "600", margin: 0 },
-  planCode: { fontSize: "12px", color: "#6b7280", background: "#f3f4f6", padding: "2px 8px", borderRadius: "10px", marginRight: "8px" },
-  productCount: { fontSize: "12px", color: "#4f46e5", background: "#ede9fe", padding: "2px 8px", borderRadius: "10px" },
-  deleteBtn: { padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "none", borderRadius: "6px", cursor: "pointer" },
-  plansInner: { background: "#f9fafb", borderRadius: "8px", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" },
-  planRow: { display: "flex", alignItems: "center", gap: "12px", fontSize: "14px" },
-  intervalBadge: { background: "#dbeafe", color: "#1e40af", padding: "2px 8px", borderRadius: "10px", fontSize: "12px" },
-  discountBadge: { background: "#d1fae5", color: "#065f46", padding: "2px 8px", borderRadius: "10px", fontSize: "12px" },
-};
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
+const s = {
+  alert: (type) => ({
+    padding: "12px 16px", borderRadius: 8, marginBottom: 16,
+    background: type === "success" ? "#d1fae5" : "#fee2e2",
+    color: type === "success" ? "#065f46" : "#991b1b", fontWeight: 500,
+  }),
+  card: { background: "white", borderRadius: 12, padding: 20, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
+  cardTitle: { fontSize: 16, fontWeight: 600, marginBottom: 16, marginTop: 0, paddingBottom: 12, borderBottom: "1px solid #f3f4f6", color: "#111827" },
+  field: { display: "flex", flexDirection: "column", gap: 5 },
+  label: { fontSize: 13, fontWeight: 500, color: "#374151" },
+  hint: { fontSize: 12, color: "#9ca3af", margin: 0 },
+  input: { padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, width: "100%", boxSizing: "border-box", background: "white" },
+  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 },
+  grid3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 },
+  toggleRow: { display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "8px 0" },
+  formActions: { display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8, marginBottom: 24 },
+  primaryBtn: { padding: "10px 20px", background: "#4f46e5", color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 },
+  submitBtn: { padding: "10px 24px", background: "#10b981", color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 },
+  cancelBtn: { padding: "10px 20px", background: "white", color: "#374151", border: "1px solid #d1d5db", borderRadius: 8, cursor: "pointer", fontWeight: 500, fontSize: 14 },
+  empty: { textAlign: "center", color: "#9ca3af", padding: 40 },
+  planCard: { border: "1px solid #e5e7eb", borderRadius: 10, padding: 16, marginBottom: 12 },
+  planHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
+  planName: { fontSize: 15, fontWeight: 600, margin: "0 0 6px 0" },
+  badge: (color) => {
+    const colors = {
+      gray: { background: "#f3f4f6", color: "#6b7280" },
+      indigo: { background: "#ede9fe", color: "#4f46e5" },
+      blue: { background: "#dbeafe", color: "#1e40af" },
+      green: { background: "#d1fae5", color: "#065f46" },
+      purple: { background: "#f3e8ff", color: "#7e22ce" },
+      orange: { background: "#fff7ed", color: "#c2410c" },
+    };
+    return { fontSize: 11, padding: "2px 8px", borderRadius: 10, marginRight: 6, fontWeight: 500, ...colors[color] };
+  },
+  deleteBtn: { padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 },
+  plansInner: { background: "#f9fafb", borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8 },
+  planRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, flexWrap: "wrap" },
+  assignProductsBtn: {
+    padding: "7px 14px", background: "white", color: "#374151",
+    border: "1px solid #d1d5db", borderRadius: 7, cursor: "pointer",
+    fontWeight: 500, fontSize: 13,
+  },
+  assignedProductChip: {
+    display: "inline-flex", alignItems: "center", gap: 5,
+    padding: "3px 8px", background: "#ede9fe", borderRadius: 20,
+    border: "1px solid #c4b5fd", color: "#4f46e5",
+  },
+  addActionBtn: {
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "8px 16px", background: "white", color: "#374151",
+    border: "1px solid #d1d5db", borderRadius: 8, cursor: "pointer",
+    fontWeight: 500, fontSize: 13,
+  },
+  dropdown: {
+    position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 50,
+    background: "white", border: "1px solid #e5e7eb", borderRadius: 10,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.12)", minWidth: 260, overflow: "hidden",
+  },
+  dropdownGroup: {
+    padding: "12px 16px 4px", fontSize: 12, fontWeight: 600,
+    color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em",
+  },
+  dropdownItem: {
+    display: "block", width: "100%", textAlign: "left",
+    padding: "9px 16px", border: "none", background: "transparent",
+    fontSize: 14, color: "#111827", cursor: "pointer",
+  },
+  dropdownDivider: { height: 1, background: "#f3f4f6", margin: "4px 0" },
+  infoBanner: {
+    padding: "10px 14px", background: "#eff6ff", border: "1px solid #bfdbfe",
+    borderRadius: 8, fontSize: 13, color: "#1e40af", marginBottom: 12,
+  },
+  actionRow: {
+    display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+    padding: 14, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, gap: 12,
+  },
+  actionRowLeft: { display: "flex", gap: 10, alignItems: "flex-start", flex: 1 },
+  actionIcon: { fontSize: 20, lineHeight: 1, marginTop: 1 },
+  removeActionBtn: {
+    padding: "8px 10px", background: "#fee2e2", color: "#991b1b",
+    border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
+    flexShrink: 0, alignSelf: "flex-start",
+  },
+  selectedProduct: {
+    display: "flex", alignItems: "center", gap: 10, marginTop: 8,
+    padding: "8px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8,
+  },
+  selectProductBtn: {
+    padding: "7px 14px", background: "white", color: "#4f46e5",
+    border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer",
+    fontWeight: 500, fontSize: 13,
+  },
+  changeProductBtn: {
+    padding: "4px 10px", background: "white", color: "#374151",
+    border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, marginLeft: "auto",
+  },
+};
