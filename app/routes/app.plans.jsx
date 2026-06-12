@@ -32,6 +32,17 @@ export async function loader({ request }) {
                       minCycles
                       maxCycles
                     }
+                    ... on SellingPlanFixedBillingPolicy {
+                      remainingBalanceChargeTrigger
+                      checkoutCharge {
+                        type
+                        value {
+                          ... on SellingPlanCheckoutChargePercentageValue {
+                            percentage
+                          }
+                        }
+                      }
+                    }
                   }
                   pricingPolicies {
                     ... on SellingPlanFixedPricingPolicy {
@@ -53,7 +64,8 @@ export async function loader({ request }) {
   `);
 
   const data = await res.json();
-  return { sellingPlanGroups: data.data.sellingPlanGroups.edges.map((e) => e.node) };
+  const sellingPlanGroups = data.data.sellingPlanGroups.edges.map((e) => e.node);
+  return { sellingPlanGroups };
 }
 
 // ─── Action ────────────────────────────────────────────────────────────────────
@@ -72,34 +84,18 @@ export async function action({ request }) {
     const billingType = formData.get("billingType") || "DEFAULT";
     const minCycles = parseInt(formData.get("minCycles") || "0");
     const maxCycles = parseInt(formData.get("maxCycles") || "0");
-
-    const tieredDiscount = formData.get("tieredDiscount") === "true";
-    const tieredDiscountValue = parseFloat(formData.get("tieredDiscountValue") || "0");
-    const tieredDiscountAfter = parseInt(formData.get("tieredDiscountAfter") || "1");
-    const tieredDiscountType = formData.get("tieredDiscountType") || "PERCENTAGE";
-
     const allowAutomaticActions = formData.get("allowAutomaticActions") === "true";
 
     let automaticActions = [];
-    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) {}
+    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) { }
 
-    // Selected product IDs to assign after creation
     let selectedProductIds = [];
-    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) {}
+    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) { }
 
     const pricingPolicies = [];
     if (discount > 0) {
       pricingPolicies.push({
         fixed: { adjustmentType: "PERCENTAGE", adjustmentValue: { percentage: discount } },
-      });
-    }
-    if (tieredDiscount && tieredDiscountValue > 0) {
-      pricingPolicies.push({
-        cycleDiscounts: {
-          afterCycle: tieredDiscountAfter,
-          adjustmentType: tieredDiscountType,
-          adjustmentValue: { percentage: tieredDiscountValue },
-        },
       });
     }
 
@@ -153,7 +149,6 @@ export async function action({ request }) {
 
     const newGroupId = data.data.sellingPlanGroupCreate.sellingPlanGroup.id;
 
-    // Assign selected products if any
     if (selectedProductIds.length > 0) {
       await fetch(`https://${session.shop}/admin/api/2025-10/graphql.json`, {
         method: "POST",
@@ -170,14 +165,19 @@ export async function action({ request }) {
       });
     }
 
-    return { success: `Plan created successfully!${selectedProductIds.length > 0 ? ` ${selectedProductIds.length} product(s) assigned.` : ""}`, automaticActions, allowAutomaticActions };
+    return {
+      success: `Plan created successfully!${selectedProductIds.length > 0 ? ` ${selectedProductIds.length} product(s) assigned.` : ""}`,
+      created: true,
+      automaticActions,
+      allowAutomaticActions,
+    };
   }
 
   // ── Assign product to existing plan ──
   if (intent === "assignProduct") {
     const planGroupId = formData.get("planGroupId");
     let productIds = [];
-    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) {}
+    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) { }
 
     if (productIds.length === 0) return { error: "No products selected." };
 
@@ -320,7 +320,7 @@ function NumberSelect({ label, name, min, max, disabledLabel, defaultValue }) {
   );
 }
 
-// ─── Product Picker Button (reusable) ─────────────────────────────────────────
+// ─── Product Picker Button ─────────────────────────────────────────────────────
 
 function ProductPickerButton({ selectedProducts, onSelect, multiple = true, label = "Select products" }) {
   const shopify = useAppBridge();
@@ -356,20 +356,16 @@ function ProductPickerButton({ selectedProducts, onSelect, multiple = true, labe
               >✕</button>
             </div>
           ))}
-          <button type="button" style={s.selectProductBtn} onClick={openPicker}>
-            + Add more products
-          </button>
+          <button type="button" style={s.selectProductBtn} onClick={openPicker}>+ Add more products</button>
         </div>
       ) : (
-        <button type="button" style={s.selectProductBtn} onClick={openPicker}>
-          🔍 {label}
-        </button>
+        <button type="button" style={s.selectProductBtn} onClick={openPicker}>🔍 {label}</button>
       )}
     </div>
   );
 }
 
-// ─── Add Action dropdown ───────────────────────────────────────────────────────
+// ─── Add Action Dropdown ───────────────────────────────────────────────────────
 
 function AddActionDropdown({ onAdd }) {
   const [open, setOpen] = useState(false);
@@ -462,7 +458,6 @@ function ActionRow({ action, index, onChange, onRemove }) {
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{ACTION_LABELS[action.type]}</div>
             <div style={s.hint}>{ACTION_DESCRIPTIONS[action.type]}</div>
 
-            {/* Product / variant picker */}
             {hasProduct ? (
               <div style={s.selectedProduct}>
                 {(action.productImage || action.variantImage) && (
@@ -483,7 +478,6 @@ function ActionRow({ action, index, onChange, onRemove }) {
               </button>
             )}
 
-            {/* After # orders */}
             <div style={{ marginTop: 10 }}>
               <label style={{ ...s.label, display: "block", marginBottom: 4 }}>After # of orders</label>
               <input
@@ -500,7 +494,7 @@ function ActionRow({ action, index, onChange, onRemove }) {
   );
 }
 
-// ─── Assign Products to Existing Plan ─────────────────────────────────────────
+// ─── Assign Products Panel ─────────────────────────────────────────────────────
 
 function AssignProductsPanel({ group }) {
   const [open, setOpen] = useState(false);
@@ -516,7 +510,6 @@ function AssignProductsPanel({ group }) {
 
       {open && (
         <div style={{ marginTop: 10, padding: 14, background: "#f9fafb", borderRadius: 10, border: "1px solid #e5e7eb" }}>
-          {/* Existing products */}
           {group.products.edges.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -538,7 +531,6 @@ function AssignProductsPanel({ group }) {
             </div>
           )}
 
-          {/* Picker */}
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 500, color: "#374151", marginBottom: 6 }}>Add products to this plan</div>
             <ProductPickerButton
@@ -619,7 +611,7 @@ function CreatePlanForm({ onCancel, isSubmitting }) {
         </div>
       </SectionCard>
 
-      {/* ── Assign Products at creation ── */}
+      {/* ── Assign Products ── */}
       <SectionCard title="Assign Products">
         <p style={{ ...s.hint, marginBottom: 10 }}>
           Optionally assign products to this plan right away. You can also do this later from the plan card.
@@ -775,6 +767,20 @@ function CreatePlanForm({ onCancel, isSubmitting }) {
   );
 }
 
+// ─── Plan Card ────────────────────────────────────────────────────────────────
+
+function PlanBillingBadge({ bp }) {
+  // Recurring plan
+  if (bp?.interval) {
+    return <span style={s.badge("blue")}>{bp.intervalCount} × {bp.interval}</span>;
+  }
+  // Pre-paid fixed plan
+  if (bp?.remainingBalanceChargeTrigger) {
+    return <span style={s.badge("blue")}>Pre-paid</span>;
+  }
+  return null;
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PlansPage() {
@@ -783,6 +789,13 @@ export default function PlansPage() {
   const navigation = useNavigation();
   const [showForm, setShowForm] = useState(false);
   const isSubmitting = navigation.state === "submitting";
+  console.log(sellingPlanGroups)
+  // Auto-close form on successful plan creation
+  useEffect(() => {
+    if (actionData?.created) {
+      setShowForm(false);
+    }
+  }, [actionData]);
 
   return (
     <s-page heading="Selling Plans">
@@ -818,7 +831,6 @@ export default function PlansPage() {
                 </Form>
               </div>
 
-              {/* Selling plans list */}
               <div style={s.plansInner}>
                 {group.sellingPlans.edges.map(({ node: plan }) => {
                   const bp = plan.billingPolicy;
@@ -827,7 +839,7 @@ export default function PlansPage() {
                   return (
                     <div key={plan.id} style={s.planRow}>
                       <span>📅 {plan.name}</span>
-                      <span style={s.badge("blue")}>{bp?.intervalCount} × {bp?.interval}</span>
+                      <PlanBillingBadge bp={bp} />
                       {bp?.minCycles > 0 && <span style={s.badge("purple")}>min {bp.minCycles} orders</span>}
                       {bp?.maxCycles > 0 && <span style={s.badge("orange")}>max {bp.maxCycles} orders</span>}
                       {pct > 0 && <span style={s.badge("green")}>-{pct}% off</span>}
@@ -836,7 +848,6 @@ export default function PlansPage() {
                 })}
               </div>
 
-              {/* Assign products panel */}
               <AssignProductsPanel group={group} />
             </div>
           ))
