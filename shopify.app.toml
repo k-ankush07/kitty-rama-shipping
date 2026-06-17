@@ -1,6 +1,6 @@
 client_id = "dd79d89d4e7877c4faa808d2345b228b"
 name = "Kitty rama shipping"
-application_url = "https://humans-westminster-reconstruction-julie.trycloudflare.com"
+application_url = "https://labor-desirable-gods-atlas.trycloudflare.com"
 embedded = true
 
 api_version = "2024-01"
@@ -22,4 +22,4 @@ api_version = "2024-01"
 [access_scopes]
 scopes = "read_products,write_products,read_orders,write_orders,read_customers,read_purchase_options,write_purchase_options,read_own_subscription_contracts,write_own_subscription_contracts"
 [auth]
-redirect_urls = [ "https://humans-westminster-reconstruction-julie.trycloudflare.com/api/auth" ]
+redirect_urls = ["https://labor-desirable-gods-atlas.trycloudflare.com/api/auth"]

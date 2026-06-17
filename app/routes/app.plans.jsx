@@ -3,6 +3,25 @@ import { authenticate } from "../shopify.server";
 import { useState, useRef, useEffect } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
+// ─── Metafield key helper ──────────────────────────────────────────────────────
+//
+// IMPORTANT: `SellingPlanGroup` does NOT implement Shopify's `HasMetafields`
+// interface, so it can never be used as a metafield `ownerId` — that's what
+// was throwing "Invalid id: gid://shopify/SellingPlanGroup/...". Only
+// `SellingPlan` (the individual plan inside a group), `Shop`, `Product`, etc.
+// support metafields.
+//
+// Since these "extra settings" describe the whole group (not a single plan),
+// we store them on the Shop instead, with one metafield key per group so each
+// plan's settings stay independent.
+
+function metaKeyForGroup(groupId) {
+  const numericId = groupId.split("/").pop();
+  return `extra_settings_${numericId}`;
+}
+
+const EXTRA_SETTINGS_NAMESPACE = "subscription_app";
+
 // ─── Loader ────────────────────────────────────────────────────────────────────
 
 export async function loader({ request }) {
@@ -53,6 +72,15 @@ export async function loader({ request }) {
                         }
                       }
                     }
+                    ... on SellingPlanRecurringPricingPolicy {
+                      adjustmentType
+                      afterCycle
+                      adjustmentValue {
+                        ... on SellingPlanPricingPolicyPercentageValue {
+                          percentage
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -65,7 +93,43 @@ export async function loader({ request }) {
 
   const data = await res.json();
   const sellingPlanGroups = data.data.sellingPlanGroups.edges.map((e) => e.node);
-  return { sellingPlanGroups };
+
+  // ── Fetch all extra-settings metafields from the Shop in a single request ──
+  // (previously this ran one query per group against SellingPlanGroup, which
+  // doesn't support metafields at all and always failed silently)
+  let metafieldsByKey = new Map();
+  try {
+    const metaRes = await admin.graphql(`
+      query {
+        shop {
+          metafields(namespace: "${EXTRA_SETTINGS_NAMESPACE}", first: 250) {
+            edges { node { key value } }
+          }
+        }
+      }
+    `);
+    const metaData = await metaRes.json();
+    const edges = metaData.data?.shop?.metafields?.edges || [];
+    metafieldsByKey = new Map(edges.map(({ node }) => [node.key, node.value]));
+  } catch (_) {
+    // If this fails for any reason, just fall back to no extra settings
+    // rather than breaking the whole page.
+  }
+
+  const groupsWithMeta = sellingPlanGroups.map((group) => {
+    const raw = metafieldsByKey.get(metaKeyForGroup(group.id));
+    let extraSettings = null;
+    if (raw) {
+      try {
+        extraSettings = JSON.parse(raw);
+      } catch (_) {
+        extraSettings = null;
+      }
+    }
+    return { ...group, extraSettings };
+  });
+
+  return { sellingPlanGroups: groupsWithMeta };
 }
 
 // ─── Action ────────────────────────────────────────────────────────────────────
@@ -84,18 +148,63 @@ export async function action({ request }) {
     const billingType = formData.get("billingType") || "DEFAULT";
     const minCycles = parseInt(formData.get("minCycles") || "0");
     const maxCycles = parseInt(formData.get("maxCycles") || "0");
-    const allowAutomaticActions = formData.get("allowAutomaticActions") === "true";
 
+    // Tiered discount
+    const tieredDiscount = formData.get("tieredDiscount") === "true";
+    const tieredDiscountValue = parseFloat(formData.get("tieredDiscountValue") || "0");
+    const tieredDiscountAfter = parseInt(formData.get("tieredDiscountAfter") || "1");
+    const tieredDiscountType = formData.get("tieredDiscountType") || "PERCENTAGE";
+
+    // Shipping discount (saved to metafield)
+    const shippingDiscount = formData.get("shippingDiscount") === "true";
+    const shippingDiscountValue = parseFloat(formData.get("shippingDiscountValue") || "0");
+    const shippingDiscountAfter = parseInt(formData.get("shippingDiscountAfter") || "0");
+    const shippingDiscountType = formData.get("shippingDiscountType") || "PRICE";
+
+    // Quantity settings (saved to metafield)
+    const quantityChange = formData.get("quantityChange") === "true";
+    const quantityChangeValue = parseInt(formData.get("quantityChangeValue") || "1");
+    const quantityChangeAfter = parseInt(formData.get("quantityChangeAfter") || "1");
+    const setMinQuantity = formData.get("setMinQuantity") === "true";
+    const minQuantity = parseInt(formData.get("minQuantity") || "1");
+
+    // Automatic actions (saved to metafield)
+    const allowAutomaticActions = formData.get("allowAutomaticActions") === "true";
     let automaticActions = [];
-    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) { }
+    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) {}
+
+    // Customer product changes (saved to metafield)
+    const allowSwaps = formData.get("allowSwaps") === "on" || formData.get("allowSwaps") === "true";
+    const allowVariantChanges = formData.get("allowVariantChanges") === "on" || formData.get("allowVariantChanges") === "true";
+    const allowQuantityChanges = formData.get("allowQuantityChanges") === "on" || formData.get("allowQuantityChanges") === "true";
+    const keepDiscounts = formData.get("keepDiscounts") === "on" || formData.get("keepDiscounts") === "true";
 
     let selectedProductIds = [];
-    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) { }
+    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) {}
 
+    // ── Build pricing policies ──
     const pricingPolicies = [];
+
     if (discount > 0) {
       pricingPolicies.push({
-        fixed: { adjustmentType: "PERCENTAGE", adjustmentValue: { percentage: discount } },
+        fixed: {
+          adjustmentType: "PERCENTAGE",
+          adjustmentValue: { percentage: discount },
+        },
+      });
+    }
+
+    // Tiered discount uses recurring with afterCycle
+    if (tieredDiscount && tieredDiscountValue > 0) {
+      pricingPolicies.push({
+        recurring: {
+          adjustmentType: tieredDiscountType,
+          adjustmentValue:
+            tieredDiscountType === "PERCENTAGE"
+              ? { percentage: tieredDiscountValue }
+              : { fixedValue: tieredDiscountValue },
+          afterCycle: tieredDiscountAfter,
+        },
       });
     }
 
@@ -149,6 +258,7 @@ export async function action({ request }) {
 
     const newGroupId = data.data.sellingPlanGroupCreate.sellingPlanGroup.id;
 
+    // ── Assign products ──
     if (selectedProductIds.length > 0) {
       await fetch(`https://${session.shop}/admin/api/2025-10/graphql.json`, {
         method: "POST",
@@ -165,11 +275,61 @@ export async function action({ request }) {
       });
     }
 
+    // ── Save extra settings to a Shop metafield ──
+    // (SellingPlanGroup can't own metafields — see metaKeyForGroup() above)
+    const extraSettings = {
+      shippingDiscount: shippingDiscount
+        ? { enabled: true, value: shippingDiscountValue, after: shippingDiscountAfter, type: shippingDiscountType }
+        : { enabled: false },
+      quantityChange: quantityChange
+        ? { enabled: true, value: quantityChangeValue, after: quantityChangeAfter }
+        : { enabled: false },
+      minQuantity: setMinQuantity
+        ? { enabled: true, value: minQuantity }
+        : { enabled: false },
+      automaticActions: allowAutomaticActions ? automaticActions : [],
+      customerChanges: { allowSwaps, allowVariantChanges, allowQuantityChanges, keepDiscounts },
+    };
+
+    let metafieldWarning = null;
+    try {
+      const shopRes = await admin.graphql(`{ shop { id } }`);
+      const shopData = await shopRes.json();
+      const shopId = shopData.data?.shop?.id;
+
+      const metaRes = await admin.graphql(`
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id key value }
+            userErrors { field message }
+          }
+        }
+      `, {
+        variables: {
+          metafields: [{
+            ownerId: shopId,
+            namespace: EXTRA_SETTINGS_NAMESPACE,
+            key: metaKeyForGroup(newGroupId),
+            type: "json",
+            value: JSON.stringify(extraSettings),
+          }],
+        },
+      });
+
+      const metaData = await metaRes.json();
+      const userErrors = metaData.data?.metafieldsSet?.userErrors;
+      if (userErrors?.length > 0) {
+        metafieldWarning = userErrors[0].message;
+      }
+    } catch (err) {
+      // The plan itself was already created successfully — don't fail the
+      // whole request just because the extra-settings metafield didn't save.
+      metafieldWarning = "extra settings could not be saved";
+    }
+
     return {
-      success: `Plan created successfully!${selectedProductIds.length > 0 ? ` ${selectedProductIds.length} product(s) assigned.` : ""}`,
+      success: `Plan created successfully!${selectedProductIds.length > 0 ? ` ${selectedProductIds.length} product(s) assigned.` : ""}${metafieldWarning ? ` (Note: ${metafieldWarning}.)` : ""}`,
       created: true,
-      automaticActions,
-      allowAutomaticActions,
     };
   }
 
@@ -177,8 +337,7 @@ export async function action({ request }) {
   if (intent === "assignProduct") {
     const planGroupId = formData.get("planGroupId");
     let productIds = [];
-    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) { }
-
+    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) {}
     if (productIds.length === 0) return { error: "No products selected." };
 
     const res = await admin.graphql(`
@@ -208,6 +367,35 @@ export async function action({ request }) {
         }
       }
     `, { variables: { id: planGroupId } });
+
+    // Best-effort cleanup of the Shop metafield holding this group's extra
+    // settings, so deleted plans don't leave orphaned metafields behind.
+    try {
+      const shopRes = await admin.graphql(`{ shop { id } }`);
+      const shopData = await shopRes.json();
+      const shopId = shopData.data?.shop?.id;
+      if (shopId) {
+        await admin.graphql(`
+          mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+            metafieldsDelete(metafields: $metafields) {
+              deletedMetafields { key ownerId }
+              userErrors { field message }
+            }
+          }
+        `, {
+          variables: {
+            metafields: [{
+              ownerId: shopId,
+              namespace: EXTRA_SETTINGS_NAMESPACE,
+              key: metaKeyForGroup(planGroupId),
+            }],
+          },
+        });
+      }
+    } catch (_) {
+      // Non-critical — the plan group itself was already deleted.
+    }
+
     return { success: "Plan deleted!" };
   }
 
@@ -767,18 +955,44 @@ function CreatePlanForm({ onCancel, isSubmitting }) {
   );
 }
 
-// ─── Plan Card ────────────────────────────────────────────────────────────────
+// ─── Plan Billing Badge ───────────────────────────────────────────────────────
 
 function PlanBillingBadge({ bp }) {
-  // Recurring plan
   if (bp?.interval) {
     return <span style={s.badge("blue")}>{bp.intervalCount} × {bp.interval}</span>;
   }
-  // Pre-paid fixed plan
   if (bp?.remainingBalanceChargeTrigger) {
     return <span style={s.badge("blue")}>Pre-paid</span>;
   }
   return null;
+}
+
+// ─── Extra Settings Badges ────────────────────────────────────────────────────
+
+function ExtraSettingsBadges({ group }) {
+  const settings = group.extraSettings;
+  if (!settings) return null;
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+      {settings.shippingDiscount?.enabled && (
+        <span style={s.badge("blue")}>🚚 Shipping discount after {settings.shippingDiscount.after} orders</span>
+      )}
+      {settings.quantityChange?.enabled && (
+        <span style={s.badge("purple")}>📦 Qty change after {settings.quantityChange.after} orders</span>
+      )}
+      {settings.minQuantity?.enabled && (
+        <span style={s.badge("orange")}>Min qty: {settings.minQuantity.value}</span>
+      )}
+      {settings.automaticActions?.length > 0 && (
+        <span style={s.badge("indigo")}>⚡ {settings.automaticActions.length} auto action(s)</span>
+      )}
+      {settings.customerChanges?.allowSwaps && <span style={s.badge("green")}>✓ Swaps</span>}
+      {settings.customerChanges?.allowVariantChanges && <span style={s.badge("green")}>✓ Variants</span>}
+      {settings.customerChanges?.allowQuantityChanges && <span style={s.badge("green")}>✓ Qty changes</span>}
+      {settings.customerChanges?.keepDiscounts && <span style={s.badge("green")}>✓ Keep discounts</span>}
+    </div>
+  );
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -789,12 +1003,11 @@ export default function PlansPage() {
   const navigation = useNavigation();
   const [showForm, setShowForm] = useState(false);
   const isSubmitting = navigation.state === "submitting";
+
   console.log(sellingPlanGroups)
-  // Auto-close form on successful plan creation
+
   useEffect(() => {
-    if (actionData?.created) {
-      setShowForm(false);
-    }
+    if (actionData?.created) setShowForm(false);
   }, [actionData]);
 
   return (
@@ -819,10 +1032,13 @@ export default function PlansPage() {
               <div style={s.planHeader}>
                 <div>
                   <h3 style={s.planName}>{group.name}</h3>
-                  <span style={s.badge("gray")}>{group.merchantCode}</span>
-                  <span style={s.badge("indigo")}>
-                    {group.products.edges.length}{group.products.pageInfo.hasNextPage ? "+" : ""} products
-                  </span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+                    <span style={s.badge("gray")}>{group.merchantCode}</span>
+                    <span style={s.badge("indigo")}>
+                      {group.products.edges.length}{group.products.pageInfo.hasNextPage ? "+" : ""} products
+                    </span>
+                  </div>
+                  <ExtraSettingsBadges group={group} />
                 </div>
                 <Form method="post">
                   <input type="hidden" name="intent" value="delete" />
@@ -834,8 +1050,10 @@ export default function PlansPage() {
               <div style={s.plansInner}>
                 {group.sellingPlans.edges.map(({ node: plan }) => {
                   const bp = plan.billingPolicy;
-                  const pricing = plan.pricingPolicies?.[0];
-                  const pct = pricing?.adjustmentValue?.percentage;
+                  const fixedPricing = plan.pricingPolicies?.find((p) => !p.afterCycle);
+                  const tieredPricing = plan.pricingPolicies?.find((p) => p.afterCycle);
+                  const pct = fixedPricing?.adjustmentValue?.percentage;
+                  const tieredPct = tieredPricing?.adjustmentValue?.percentage;
                   return (
                     <div key={plan.id} style={s.planRow}>
                       <span>📅 {plan.name}</span>
@@ -843,6 +1061,9 @@ export default function PlansPage() {
                       {bp?.minCycles > 0 && <span style={s.badge("purple")}>min {bp.minCycles} orders</span>}
                       {bp?.maxCycles > 0 && <span style={s.badge("orange")}>max {bp.maxCycles} orders</span>}
                       {pct > 0 && <span style={s.badge("green")}>-{pct}% off</span>}
+                      {tieredPct > 0 && (
+                        <span style={s.badge("indigo")}>-{tieredPct}% after {tieredPricing.afterCycle} orders</span>
+                      )}
                     </div>
                   );
                 })}
@@ -891,69 +1112,24 @@ const s = {
       purple: { background: "#f3e8ff", color: "#7e22ce" },
       orange: { background: "#fff7ed", color: "#c2410c" },
     };
-    return { fontSize: 11, padding: "2px 8px", borderRadius: 10, marginRight: 6, fontWeight: 500, ...colors[color] };
+    return { fontSize: 11, padding: "2px 8px", borderRadius: 10, marginRight: 6, fontWeight: 500, display: "inline-block", ...colors[color] };
   },
   deleteBtn: { padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 },
   plansInner: { background: "#f9fafb", borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8 },
   planRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, flexWrap: "wrap" },
-  assignProductsBtn: {
-    padding: "7px 14px", background: "white", color: "#374151",
-    border: "1px solid #d1d5db", borderRadius: 7, cursor: "pointer",
-    fontWeight: 500, fontSize: 13,
-  },
-  assignedProductChip: {
-    display: "inline-flex", alignItems: "center", gap: 5,
-    padding: "3px 8px", background: "#ede9fe", borderRadius: 20,
-    border: "1px solid #c4b5fd", color: "#4f46e5",
-  },
-  addActionBtn: {
-    display: "inline-flex", alignItems: "center", gap: 6,
-    padding: "8px 16px", background: "white", color: "#374151",
-    border: "1px solid #d1d5db", borderRadius: 8, cursor: "pointer",
-    fontWeight: 500, fontSize: 13,
-  },
-  dropdown: {
-    position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 50,
-    background: "white", border: "1px solid #e5e7eb", borderRadius: 10,
-    boxShadow: "0 8px 24px rgba(0,0,0,0.12)", minWidth: 260, overflow: "hidden",
-  },
-  dropdownGroup: {
-    padding: "12px 16px 4px", fontSize: 12, fontWeight: 600,
-    color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em",
-  },
-  dropdownItem: {
-    display: "block", width: "100%", textAlign: "left",
-    padding: "9px 16px", border: "none", background: "transparent",
-    fontSize: 14, color: "#111827", cursor: "pointer",
-  },
+  assignProductsBtn: { padding: "7px 14px", background: "white", color: "#374151", border: "1px solid #d1d5db", borderRadius: 7, cursor: "pointer", fontWeight: 500, fontSize: 13 },
+  assignedProductChip: { display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px", background: "#ede9fe", borderRadius: 20, border: "1px solid #c4b5fd", color: "#4f46e5" },
+  addActionBtn: { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "white", color: "#374151", border: "1px solid #d1d5db", borderRadius: 8, cursor: "pointer", fontWeight: 500, fontSize: 13 },
+  dropdown: { position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 50, background: "white", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", minWidth: 260, overflow: "hidden" },
+  dropdownGroup: { padding: "12px 16px 4px", fontSize: 12, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" },
+  dropdownItem: { display: "block", width: "100%", textAlign: "left", padding: "9px 16px", border: "none", background: "transparent", fontSize: 14, color: "#111827", cursor: "pointer" },
   dropdownDivider: { height: 1, background: "#f3f4f6", margin: "4px 0" },
-  infoBanner: {
-    padding: "10px 14px", background: "#eff6ff", border: "1px solid #bfdbfe",
-    borderRadius: 8, fontSize: 13, color: "#1e40af", marginBottom: 12,
-  },
-  actionRow: {
-    display: "flex", justifyContent: "space-between", alignItems: "flex-start",
-    padding: 14, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, gap: 12,
-  },
+  infoBanner: { padding: "10px 14px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 13, color: "#1e40af", marginBottom: 12 },
+  actionRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: 14, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, gap: 12 },
   actionRowLeft: { display: "flex", gap: 10, alignItems: "flex-start", flex: 1 },
   actionIcon: { fontSize: 20, lineHeight: 1, marginTop: 1 },
-  removeActionBtn: {
-    padding: "8px 10px", background: "#fee2e2", color: "#991b1b",
-    border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
-    flexShrink: 0, alignSelf: "flex-start",
-  },
-  selectedProduct: {
-    display: "flex", alignItems: "center", gap: 10, marginTop: 8,
-    padding: "8px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8,
-  },
-  selectProductBtn: {
-    padding: "7px 14px", background: "white", color: "#4f46e5",
-    border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer",
-    fontWeight: 500, fontSize: 13,
-  },
-  changeProductBtn: {
-    padding: "4px 10px", background: "white", color: "#374151",
-    border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer",
-    fontSize: 12, marginLeft: "auto",
-  },
+  removeActionBtn: { padding: "8px 10px", background: "#fee2e2", color: "#991b1b", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, flexShrink: 0, alignSelf: "flex-start" },
+  selectedProduct: { display: "flex", alignItems: "center", gap: 10, marginTop: 8, padding: "8px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8 },
+  selectProductBtn: { padding: "7px 14px", background: "white", color: "#4f46e5", border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer", fontWeight: 500, fontSize: 13 },
+  changeProductBtn: { padding: "4px 10px", background: "white", color: "#374151", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12, marginLeft: "auto" },
 };
