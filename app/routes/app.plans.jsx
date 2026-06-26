@@ -3,18 +3,6 @@ import { authenticate } from "../shopify.server";
 import { useState, useRef, useEffect } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
-// ─── Metafield key helper ──────────────────────────────────────────────────────
-//
-// IMPORTANT: `SellingPlanGroup` does NOT implement Shopify's `HasMetafields`
-// interface, so it can never be used as a metafield `ownerId` — that's what
-// was throwing "Invalid id: gid://shopify/SellingPlanGroup/...". Only
-// `SellingPlan` (the individual plan inside a group), `Shop`, `Product`, etc.
-// support metafields.
-//
-// Since these "extra settings" describe the whole group (not a single plan),
-// we store them on the Shop instead, with one metafield key per group so each
-// plan's settings stay independent.
-
 function metaKeyForGroup(groupId) {
   const numericId = groupId.split("/").pop();
   return `extra_settings_${numericId}`;
