@@ -81,14 +81,6 @@ const S = {
 // ─── Toolbar section divider ──────────────────────────────────────────────────
 const DIV = { width: 1, height: 18, background: t.gray200, margin: "0 4px", flexShrink: 0 };
 
-// ─── Spinner keyframes injected once ─────────────────────────────────────────
-if (typeof document !== "undefined" && !document.getElementById("spin-style")) {
-  const s = document.createElement("style");
-  s.id = "spin-style";
-  s.textContent = "@keyframes spin { to { transform: rotate(360deg); } }";
-  document.head.appendChild(s);
-}
-
 // ─── Metafield definitions to auto-create ────────────────────────────────────
 const METAFIELD_DEFINITIONS = [
   { name: "Affiliation", key: "affiliation", type: "single_line_text_field", description: "Artist affiliation" },
@@ -115,6 +107,15 @@ function QuillEditor({ value, onChange }) {
 
   const imageUploadFetcher = useFetcher();
   const imageUploadResolveRef = useRef(null);
+
+  // FIX 1: Move spinner style injection into useEffect (never runs on server)
+  useEffect(() => {
+    if (document.getElementById("spin-style")) return;
+    const s = document.createElement("style");
+    s.id = "spin-style";
+    s.textContent = "@keyframes spin { to { transform: rotate(360deg); } }";
+    document.head.appendChild(s);
+  }, []);
 
   // ── Load Quill CSS + JS from CDN once ────────────────────────────────────
   useEffect(() => {
@@ -158,45 +159,45 @@ function QuillEditor({ value, onChange }) {
   // ── Custom toolbar handlers ───────────────────────────────────────────────
   const handleImageInsert = () => fileInputRef.current?.click();
 
-const handleFileSelected = async (e) => {
-  const file = e.target.files?.[0];
-  if (!file || !quillRef.current) return;
-  e.target.value = "";
-  const quill = quillRef.current;
-  const range = quill.getSelection(true);
+  const handleFileSelected = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !quillRef.current) return;
+    e.target.value = "";
+    const quill = quillRef.current;
+    const range = quill.getSelection(true);
 
-  const dataUrl = await new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (ev) => resolve(ev.target.result);
-    reader.readAsDataURL(file);
-  });
+    const dataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => resolve(ev.target.result);
+      reader.readAsDataURL(file);
+    });
 
-  quill.insertEmbed(range.index, "image", dataUrl);
-  quill.setSelection(range.index + 1);
+    quill.insertEmbed(range.index, "image", dataUrl);
+    quill.setSelection(range.index + 1);
 
-  const url = await uploadImageFile(file);
+    const url = await uploadImageFile(file);
 
-  const editor = editorRef.current?.querySelector(".ql-editor");
-  if (editor) {
-    const prefix = dataUrl.slice(0, 64);
-    const img = Array.from(editor.querySelectorAll("img"))
-      .find((el) => el.src.startsWith(prefix));
+    const editor = editorRef.current?.querySelector(".ql-editor");
+    if (editor) {
+      const prefix = dataUrl.slice(0, 64);
+      const img = Array.from(editor.querySelectorAll("img"))
+        .find((el) => el.src.startsWith(prefix));
 
-    if (img) {
-      if (url) {
-        img.src = url;
-      } else {
-        img.replaceWith(
-          Object.assign(document.createElement("span"), {
-            textContent: "[Image upload failed]",
-            style: "color:#dc2626",
-          })
-        );
+      if (img) {
+        if (url) {
+          img.src = url;
+        } else {
+          img.replaceWith(
+            Object.assign(document.createElement("span"), {
+              textContent: "[Image upload failed]",
+              style: "color:#dc2626",
+            })
+          );
+        }
+        quill.update("user");
       }
-      quill.update("user");
     }
-  }
-};
+  };
 
   const handleVideoInsert = () => {
     const url = prompt("Enter YouTube or Vimeo URL:");
@@ -229,7 +230,7 @@ const handleFileSelected = async (e) => {
       placeholder: "Write article content…",
       modules: {
         toolbar: {
-          container: toolbarRef.current,   
+          container: toolbarRef.current,
           handlers: {
             image: handleImageInsert,
             video: handleVideoInsert,
@@ -356,10 +357,10 @@ const handleFileSelected = async (e) => {
             <button className="ql-code-block" />
             <button className="ql-clean" />
           </span>
-        </div>
 
-        {/* Right: HTML source toggle */}
-        <button
+
+          {/* Right: HTML source toggle */}
+          {/* <button
           onMouseDown={(e) => { e.preventDefault(); toggleHtml(); }}
           title={htmlMode ? "Rich text" : "Show HTML"}
           style={{
@@ -377,7 +378,8 @@ const handleFileSelected = async (e) => {
             <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
           </svg>
           HTML
-        </button>
+        </button> */}
+        </div>
       </div>
 
       {/* HTML source textarea */}
@@ -841,9 +843,13 @@ function MetafieldImagePicker({ label, hint, value, onChange, uploadState }) {
 
 // ─── Product picker ───────────────────────────────────────────────────────────
 function ProductPicker({ products, setProducts }) {
+  // FIX 2: Use mounted state instead of checking window directly in JSX
+  const [mounted, setMounted] = useState(false);
   const [fallbackInput, setFallbackInput] = useState("");
   const [fallbackMode, setFallbackMode] = useState(false);
   const [hoveredId, setHoveredId] = useState(null);
+
+  useEffect(() => setMounted(true), []);
 
   const openPicker = async () => {
     if (window.shopify?.resourcePicker) {
@@ -875,6 +881,9 @@ function ProductPicker({ products, setProducts }) {
     if (newOnes.length) setProducts((prev) => [...prev, ...newOnes]);
     setFallbackInput(""); setFallbackMode(false);
   };
+
+  // FIX 3: Only evaluate window.shopify after mount to avoid SSR/client mismatch
+  const hasResourcePicker = mounted && typeof window !== "undefined" && !!window.shopify?.resourcePicker;
 
   return (
     <div>
@@ -920,8 +929,9 @@ function ProductPicker({ products, setProducts }) {
           <button onClick={addFromFallback} style={S.btnSm}>Add</button>
         </div>
       )}
+      {/* FIX 4: Use mounted + hasResourcePicker — same value on server and client initial render */}
       <p style={{ marginTop: 8, fontSize: 12, color: t.gray400 }}>
-        {typeof window !== "undefined" && window.shopify?.resourcePicker
+        {hasResourcePicker
           ? "Opens Shopify product selector."
           : "Paste GIDs manually — resource picker requires an embedded app context."}
       </p>
@@ -1418,7 +1428,6 @@ export default function Dashboard() {
       setSaving(false);
     } else if (result?.article) {
       const savedMeta = result.article?.metafields?.edges ?? [];
-      console.log("Metafields saved:", savedMeta.length, savedMeta.map((e) => e.node.key));
       setCreatedArticle({ ...result.article, metafieldCount: savedMeta.length });
 
       if (images.length > 0) {
@@ -1638,6 +1647,20 @@ export default function Dashboard() {
           <div style={S.card}>
             <div style={S.cardHeader}><span style={S.cardTitle}>Publishing</span></div>
             <div style={S.cardBody}>
+              <Field label="Blog">
+                <div style={{ display: "flex", gap: 6 }}>
+                  <select
+                    value={blogId}
+                    onChange={(e) => setBlogId(e.target.value)}
+                    style={{ ...S.select, flex: 1 }}
+                  >
+                    {blogs.length === 0 && <option value="">No blogs yet</option>}
+                    {blogs.map((b) => (
+                      <option key={b.id} value={b.id}>{b.title}</option>
+                    ))}
+                  </select>
+                </div>
+              </Field>
               <Field label="Visibility">
                 <select value={published ? "true" : "false"} onChange={(e) => setPublished(e.target.value === "true")} style={S.select}>
                   <option value="false">Draft</option>
