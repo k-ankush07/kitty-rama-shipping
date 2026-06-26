@@ -141,10 +141,9 @@ export async function action({ request }) {
     try {
       const filename = formData.get("filename");
       const mimeType = formData.get("mimeType");
-      const attachment = formData.get("attachment"); // pure base64
+      const attachment = formData.get("attachment");
       const fileSize = formData.get("fileSize");
 
-      // Step 1: Create staged upload target
       const stagedRes = await admin.graphql(
         `mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
           stagedUploadsCreate(input: $input) {
@@ -158,13 +157,7 @@ export async function action({ request }) {
         }`,
         {
           variables: {
-            input: [{
-              filename,
-              mimeType,
-              fileSize,
-              httpMethod: "POST",
-              resource: "FILE",
-            }],
+            input: [{ filename, mimeType, fileSize, httpMethod: "POST", resource: "FILE" }],
           },
         }
       );
@@ -178,7 +171,6 @@ export async function action({ request }) {
         return Response.json({ error: "Failed to create staged upload target" }, { status: 500 });
       }
 
-      // Step 2: POST the file to the staged URL (S3/GCS)
       const buf = Buffer.from(attachment, "base64");
       const uploadForm = new FormData();
       for (const { name, value } of target.parameters) {
@@ -193,31 +185,17 @@ export async function action({ request }) {
         return Response.json({ error: `Staged upload failed: ${uploadRes.status}` }, { status: 500 });
       }
 
-      // Step 3: Register the uploaded file in Shopify Files → get GID
       const fileCreateRes = await admin.graphql(
         `mutation fileCreate($files: [FileCreateInput!]!) {
           fileCreate(files: $files) {
             files {
-              ... on MediaImage {
-                id
-                image { url }
-              }
-              ... on GenericFile {
-                id
-                url
-              }
+              ... on MediaImage { id image { url } }
+              ... on GenericFile { id url }
             }
             userErrors { field message }
           }
         }`,
-        {
-          variables: {
-            files: [{
-              originalSource: target.resourceUrl,
-              contentType: "IMAGE",
-            }],
-          },
-        }
+        { variables: { files: [{ originalSource: target.resourceUrl, contentType: "IMAGE" }] } }
       );
       const fileData = await fileCreateRes.json();
       const fileErrors = fileData?.data?.fileCreate?.userErrors;
@@ -250,10 +228,7 @@ export async function action({ request }) {
             "X-Shopify-Access-Token": session.accessToken,
           },
           body: JSON.stringify({
-            article: {
-              id: Number(numericId),
-              image: { attachment, filename },
-            },
+            article: { id: Number(numericId), image: { attachment, filename } },
           }),
         }
       );
@@ -375,6 +350,14 @@ const S = {
     display: "flex", alignItems: "center", gap: 8,
   },
 };
+
+// ─── Spinner keyframes injected once ─────────────────────────────────────────
+if (typeof document !== "undefined" && !document.getElementById("spin-style")) {
+  const s = document.createElement("style");
+  s.id = "spin-style";
+  s.textContent = "@keyframes spin { to { transform: rotate(360deg); } }";
+  document.head.appendChild(s);
+}
 
 // ─── Field ────────────────────────────────────────────────────────────────────
 function Field({ label, hint, desc, children }) {
@@ -643,38 +626,107 @@ function ImageUpload({ images, setImages }) {
 }
 
 // ─── Metafield image picker ───────────────────────────────────────────────────
-function MetafieldImagePicker({ label, hint, value, onChange }) {
+// uploadState: null | "uploading" | "done" | "error"
+function MetafieldImagePicker({ label, hint, value, onChange, uploadState }) {
   const inputRef = useRef();
+
   const handleFile = (file) => {
     if (!file || !file.type.startsWith("image/")) return;
     const reader = new FileReader();
-    reader.onload = (ev) => onChange({ name: file.name, dataUrl: ev.target.result, size: file.size, type: file.type });
+    reader.onload = (ev) =>
+      onChange({ name: file.name, dataUrl: ev.target.result, size: file.size, type: file.type });
     reader.readAsDataURL(file);
   };
+
   const clear = (e) => { e.stopPropagation(); onChange(null); };
+
+  const pill = (color, bg, border, text) => (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 3,
+      fontSize: 11, color, background: bg, border: `1px solid ${border}`,
+      borderRadius: 100, padding: "1px 7px", whiteSpace: "nowrap", flexShrink: 0,
+    }}>{text}</span>
+  );
+
+  const statusBadge = () => {
+    if (uploadState === "uploading") return pill(t.amber800, t.amber50, t.amber300, "⏳ uploading…");
+    if (uploadState === "done")      return pill(t.green800, t.green50, t.green300, "✓ ready");
+    if (uploadState === "error")     return pill(t.red800,   t.red50,   t.red300,   "✕ failed");
+    return null;
+  };
+
+  const borderColor =
+    uploadState === "done"  ? t.green300 :
+    uploadState === "error" ? t.red300   : t.gray200;
 
   return (
     <Field label={label} hint={hint}>
       <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }}
         onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ""; }} />
+
       {value ? (
-        <div onClick={() => inputRef.current?.click()}
-          style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 10px 5px 6px", border: `1.5px solid ${t.gray200}`, borderRadius: 8, background: t.white, cursor: "pointer", maxWidth: "100%", transition: "border-color .15s" }}
+        <div
+          onClick={() => inputRef.current?.click()}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            padding: "5px 10px 5px 6px", border: `1.5px solid ${borderColor}`,
+            borderRadius: 8, background: t.white, cursor: "pointer",
+            maxWidth: "100%", transition: "border-color .15s",
+          }}
           onMouseEnter={(e) => e.currentTarget.style.borderColor = t.accent}
-          onMouseLeave={(e) => e.currentTarget.style.borderColor = t.gray200}
+          onMouseLeave={(e) => e.currentTarget.style.borderColor = borderColor}
         >
-          <div style={{ width: 32, height: 32, borderRadius: 5, overflow: "hidden", flexShrink: 0, background: t.gray100, border: `1px solid ${t.gray200}` }}>
-            <img src={value.dataUrl} alt={value.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          {/* Thumbnail with spinner overlay while uploading */}
+          <div style={{
+            width: 32, height: 32, borderRadius: 5, overflow: "hidden",
+            flexShrink: 0, background: t.gray100, border: `1px solid ${t.gray200}`,
+            position: "relative",
+          }}>
+            <img src={value.dataUrl} alt={value.name}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            {uploadState === "uploading" && (
+              <div style={{
+                position: "absolute", inset: 0, background: "rgba(255,255,255,.65)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <div style={{
+                  width: 14, height: 14,
+                  border: `2px solid ${t.accent}`,
+                  borderTopColor: "transparent",
+                  borderRadius: "50%",
+                  animation: "spin 0.7s linear infinite",
+                }} />
+              </div>
+            )}
           </div>
-          <span style={{ fontSize: 13, color: t.gray700, fontWeight: 500, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value.name}</span>
-          <button onClick={clear} title="Remove image"
-            style={{ background: "none", border: "none", cursor: "pointer", color: t.gray400, fontSize: 16, lineHeight: 1, padding: "0 2px", marginLeft: 2 }}
+
+          <span style={{
+            fontSize: 13, color: t.gray700, fontWeight: 500,
+            maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>{value.name}</span>
+
+          {statusBadge()}
+
+          <button
+            onClick={clear}
+            title="Remove image"
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: t.gray400, fontSize: 16, lineHeight: 1, padding: "0 2px", marginLeft: "auto",
+            }}
             onMouseEnter={(e) => e.currentTarget.style.color = t.red600}
-            onMouseLeave={(e) => e.currentTarget.style.color = t.gray400}>x</button>
+            onMouseLeave={(e) => e.currentTarget.style.color = t.gray400}
+          >x</button>
         </div>
       ) : (
-        <div onClick={() => inputRef.current?.click()}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", border: `1.5px dashed ${t.gray300}`, borderRadius: 8, background: t.gray50, cursor: "pointer", color: t.gray500, fontSize: 13, transition: "border-color .15s, background .15s" }}
+        <div
+          onClick={() => inputRef.current?.click()}
+          style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+            border: `1.5px dashed ${t.gray300}`, borderRadius: 8,
+            background: t.gray50, cursor: "pointer", color: t.gray500,
+            fontSize: 13, transition: "border-color .15s, background .15s",
+          }}
           onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accent; e.currentTarget.style.background = t.accentLight; }}
           onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.gray300; e.currentTarget.style.background = t.gray50; }}
         >
@@ -786,8 +838,15 @@ export default function Dashboard() {
   const [cymbalSetup, setCymbalSetup] = useState("");
   const [q1, setQ1] = useState(""); const [q2, setQ2] = useState("");
   const [q3, setQ3] = useState(""); const [q4, setQ4] = useState("");
-  const [cymbalSetupImage, setCymbalSetupImage] = useState(null);
+
+  // Image state: file object + uploadState + resolved GID
+  const [cymbalSetupImage,    setCymbalSetupImage]    = useState(null);
   const [featuredBannerImage, setFeaturedBannerImage] = useState(null);
+  const [cymbalUploadState,    setCymbalUploadState]    = useState(null); // null|uploading|done|error
+  const [bannerUploadState,    setBannerUploadState]    = useState(null);
+  const [cymbalGidRef,    setCymbalGidRef]    = useState(null); // resolved Shopify GID
+  const [bannerGidRef,    setBannerGidRef]    = useState(null);
+
   const [goToProducts, setGoToProducts] = useState([]);
   const [activeTab, setActiveTab] = useState("content");
   const [status, setStatus] = useState(null);
@@ -796,54 +855,103 @@ export default function Dashboard() {
 
   const fetcher = useFetcher();
   const imageFetcher = useFetcher();
-  const uploadFetcher = useFetcher();
-  const uploadResolveRef = useRef(null);
-  const uploadKeyRef = useRef(0); // incremented each call so stale data is ignored
+
+  // ── Two independent upload fetchers for background uploads ────────────────
+  const uploadFetcher1 = useFetcher(); // cymbal setup image
+  const uploadFetcher2 = useFetcher(); // featured banner image
+  const uploadResolveRef1 = useRef(null);
+  const uploadResolveRef2 = useRef(null);
+  const uploadKeyRef1 = useRef(0);
+  const uploadKeyRef2 = useRef(0);
 
   const handleBlogCreated = (newBlog) => {
     setBlogs((prev) => [...prev, newBlog]);
     setBlogId(newBlog.id);
-    setTitle(newBlog.title);
     setStatus({ type: "success", message: `Blog "${newBlog.title}" created and selected!` });
   };
 
-  // ── Upload a single metafield image via uploadFetcher → returns GID or null ──
-  // Raw fetch() hits app-bridge (405) or the layout route (no action).
-  // useFetcher() is the only reliable way to POST to this route's action from
-  // inside an embedded Shopify app. We wrap it in a Promise keyed by a counter
-  // so stale .data from a previous call is never mistaken for the current one.
-  function uploadShopifyFile(imageObj) {
-    if (!imageObj) return Promise.resolve(null);
-    const attachment = imageObj.dataUrl.split(",")[1];
-    const mimeType = imageObj.type || imageObj.dataUrl.split(";")[0].split(":")[1];
-    const fileSize = String(Math.ceil((attachment.length * 3) / 4));
-    const key = ++uploadKeyRef.current;
+  // ── Resolve fetcher 1 (cymbal) ────────────────────────────────────────────
+  useEffect(() => {
+    if (!uploadFetcher1.data) return;
+    if (!uploadResolveRef1.current) return;
+    if (uploadFetcher1.state !== "idle") return;
+    const { resolve } = uploadResolveRef1.current;
+    uploadResolveRef1.current = null;
+    if (uploadFetcher1.data?.error) {
+      console.error("[cymbal upload] error:", uploadFetcher1.data.error);
+      setCymbalUploadState("error");
+      resolve(null);
+    } else {
+      const gid = uploadFetcher1.data?.gid ?? null;
+      console.log("[cymbal upload] GID:", gid);
+      setCymbalGidRef(gid);
+      setCymbalUploadState(gid ? "done" : "error");
+      resolve(gid);
+    }
+  }, [uploadFetcher1.data, uploadFetcher1.state]);
 
+  // ── Resolve fetcher 2 (banner) ────────────────────────────────────────────
+  useEffect(() => {
+    if (!uploadFetcher2.data) return;
+    if (!uploadResolveRef2.current) return;
+    if (uploadFetcher2.state !== "idle") return;
+    const { resolve } = uploadResolveRef2.current;
+    uploadResolveRef2.current = null;
+    if (uploadFetcher2.data?.error) {
+      console.error("[banner upload] error:", uploadFetcher2.data.error);
+      setBannerUploadState("error");
+      resolve(null);
+    } else {
+      const gid = uploadFetcher2.data?.gid ?? null;
+      console.log("[banner upload] GID:", gid);
+      setBannerGidRef(gid);
+      setBannerUploadState(gid ? "done" : "error");
+      resolve(gid);
+    }
+  }, [uploadFetcher2.data, uploadFetcher2.state]);
+
+  // ── Generic upload helper ─────────────────────────────────────────────────
+  function submitUpload(imageObj, fetcher, resolveRef, keyRef) {
+    const attachment = imageObj.dataUrl.split(",")[1];
+    const mimeType   = imageObj.type || imageObj.dataUrl.split(";")[0].split(":")[1];
+    const fileSize   = String(Math.ceil((attachment.length * 3) / 4));
+    ++keyRef.current;
     return new Promise((resolve) => {
-      uploadResolveRef.current = { resolve, key };
-      uploadFetcher.submit(
+      resolveRef.current = { resolve, key: keyRef.current };
+      fetcher.submit(
         { intent: "uploadFile", filename: imageObj.name, mimeType, attachment, fileSize },
         { method: "post" }
       );
     });
   }
 
-  // Resolve the pending promise when uploadFetcher returns fresh data
-  useEffect(() => {
-    if (!uploadFetcher.data) return;
-    if (!uploadResolveRef.current) return;
-    // Only resolve if the fetcher is idle (submission complete), not still loading
-    if (uploadFetcher.state !== "idle") return;
-    const { resolve } = uploadResolveRef.current;
-    uploadResolveRef.current = null;
-    if (uploadFetcher.data?.error) {
-      console.error("[uploadShopifyFile] server error:", uploadFetcher.data.error);
-      resolve(null);
-    } else {
-      console.log("[uploadShopifyFile] success, GID:", uploadFetcher.data?.gid);
-      resolve(uploadFetcher.data?.gid ?? null);
-    }
-  }, [uploadFetcher.data, uploadFetcher.state]);
+  // ── Background upload triggered as soon as user picks a file ─────────────
+  const handleCymbalImageChange = (imgObj) => {
+    setCymbalSetupImage(imgObj);
+    setCymbalGidRef(null);
+    if (!imgObj) { setCymbalUploadState(null); return; }
+    setCymbalUploadState("uploading");
+    submitUpload(imgObj, uploadFetcher1, uploadResolveRef1, uploadKeyRef1);
+  };
+
+  const handleBannerImageChange = (imgObj) => {
+    setFeaturedBannerImage(imgObj);
+    setBannerGidRef(null);
+    if (!imgObj) { setBannerUploadState(null); return; }
+    setBannerUploadState("uploading");
+    submitUpload(imgObj, uploadFetcher2, uploadResolveRef2, uploadKeyRef2);
+  };
+
+  // ── If an upload is still in progress at save time, wait for it ──────────
+  function waitForGid(currentGid, resolveRef) {
+    if (currentGid) return Promise.resolve(currentGid);
+    if (!resolveRef.current) return Promise.resolve(null);
+    // Already submitted — wrap the existing resolve in a new promise
+    return new Promise((resolve) => {
+      const original = resolveRef.current.resolve;
+      resolveRef.current.resolve = (gid) => { original(gid); resolve(gid); };
+    });
+  }
 
   function buildMetafields(cymbalGid = null, bannerGid = null) {
     const raw = [
@@ -853,7 +961,6 @@ export default function Dashboard() {
       { namespace: "custom", key: "question_2",   value: q2,          type: "single_line_text_field" },
       { namespace: "custom", key: "question_3",   value: q3,          type: "single_line_text_field" },
       { namespace: "custom", key: "question_4",   value: q4,          type: "single_line_text_field" },
-      // Only include file_reference if we have a real Shopify GID
       cymbalGid ? { namespace: "custom", key: "cymbal_setup_image",    value: cymbalGid, type: "file_reference" } : null,
       bannerGid ? { namespace: "custom", key: "featured_banner_image", value: bannerGid, type: "file_reference" } : null,
     ].filter(Boolean);
@@ -870,7 +977,7 @@ export default function Dashboard() {
     return raw.filter((f) => f.value && String(f.value).trim() !== "");
   }
 
-  // ── Main save handler — now async to upload files first ──
+  // ── Main save handler ─────────────────────────────────────────────────────
   async function handlePost() {
     if (!blogId) {
       setStatus({ type: "error", message: "Please select a blog or create a new one first." });
@@ -878,41 +985,50 @@ export default function Dashboard() {
     }
     setSaving(true);
 
-    // Step 1: Upload metafield images to Shopify Files if present
-    let cymbalGid = null;
-    let bannerGid = null;
+    // Images were already uploading in background — just wait if still in flight
+    let resolvedCymbal = null;
+    let resolvedBanner = null;
 
-    if (cymbalSetupImage || featuredBannerImage) {
-      // uploadFetcher can only handle one submission at a time → upload sequentially
-      if (cymbalSetupImage) {
-        setStatus({ type: "loading", message: "Uploading cymbal setup image..." });
-        cymbalGid = await uploadShopifyFile(cymbalSetupImage);
-        if (!cymbalGid) {
-          setStatus({ type: "error", message: "Failed to upload cymbal setup image. Check console for details." });
-          setSaving(false);
-          return;
-        }
-      }
-      if (featuredBannerImage) {
-        setStatus({ type: "loading", message: "Uploading featured banner image..." });
-        bannerGid = await uploadShopifyFile(featuredBannerImage);
-        if (!bannerGid) {
-          setStatus({ type: "error", message: "Failed to upload featured banner image. Check console for details." });
-          setSaving(false);
-          return;
-        }
+    const needWait =
+      (cymbalSetupImage    && cymbalUploadState !== "done" && cymbalUploadState !== "error") ||
+      (featuredBannerImage && bannerUploadState !== "done" && bannerUploadState !== "error");
+
+    if (needWait) {
+      setStatus({ type: "loading", message: "Waiting for images to finish uploading…" });
+    }
+
+    if (cymbalSetupImage) {
+      resolvedCymbal = cymbalGidRef
+        ? cymbalGidRef
+        : await waitForGid(cymbalGidRef, uploadResolveRef1);
+      if (!resolvedCymbal) {
+        setStatus({ type: "error", message: "Cymbal setup image upload failed. Please re-select the image and try again." });
+        setSaving(false);
+        return;
       }
     }
 
-    // Step 2: Build article variables with real GIDs
-    setStatus({ type: "loading", message: "Creating article..." });
-    const metafields = buildMetafields(cymbalGid, bannerGid);
+    if (featuredBannerImage) {
+      resolvedBanner = bannerGidRef
+        ? bannerGidRef
+        : await waitForGid(bannerGidRef, uploadResolveRef2);
+      if (!resolvedBanner) {
+        setStatus({ type: "error", message: "Featured banner image upload failed. Please re-select the image and try again." });
+        setSaving(false);
+        return;
+      }
+    }
+
+    // Build and submit article
+    setStatus({ type: "loading", message: "Creating article…" });
+    const metafields = buildMetafields(resolvedCymbal, resolvedBanner);
 
     const article = { blogId, title: title || "Untitled", isPublished: published };
-    if (content && content.trim())  article.body       = content;
-    if (author && author.trim())    article.author     = { name: author.trim() };
-    if (tags.length)                article.tags       = tags;
-    if (metafields.length)          article.metafields = metafields;
+    if (content?.trim())                    article.body       = content;
+    const trimmedAuthor = author?.trim() ?? "";
+    if (trimmedAuthor.length > 0)           article.author     = { name: trimmedAuthor };
+    if (tags.length)                        article.tags       = tags;
+    if (metafields.length)                  article.metafields = metafields;
 
     fetcher.submit(
       { query: CREATE_ARTICLE_MUTATION, variables: JSON.stringify({ article }) },
@@ -920,19 +1036,28 @@ export default function Dashboard() {
     );
   }
 
-  function handleDiscard() {
-    if (!window.confirm("Discard all changes?")) return;
+  function resetForm() {
     setTitle(""); setContent(""); setImages([]);
-    setBlogId(blogs?.[0]?.id ?? "");
     setAuthor(""); setTags([]);
     setPublished(false);
     setAffiliation(""); setCymbalSetup("");
     setCymbalSetupImage(null); setFeaturedBannerImage(null);
+    setCymbalUploadState(null); setBannerUploadState(null);
+    setCymbalGidRef(null); setBannerGidRef(null);
     setQ1(""); setQ2(""); setQ3(""); setQ4("");
-    setGoToProducts([]); setStatus(null); setCreatedArticle(null);
+    setGoToProducts([]);
+    setActiveTab("content");
   }
 
-  // ── Article create result → upload article featured image via REST ──
+  function handleDiscard() {
+    if (!window.confirm("Discard all changes?")) return;
+    resetForm();
+    setBlogId(blogs?.[0]?.id ?? "");
+    setStatus(null);
+    setCreatedArticle(null);
+  }
+
+  // ── Article create result ─────────────────────────────────────────────────
   useEffect(() => {
     if (!fetcher.data) return;
     const result = fetcher.data?.data?.articleCreate;
@@ -952,18 +1077,13 @@ export default function Dashboard() {
         const featured = images[0];
         const attachment = featured.dataUrl.split(",")[1];
         imageFetcher.submit(
-          {
-            intent: "addImage",
-            articleId: result.article.id,
-            blogId,
-            attachment,
-            filename: featured.name,
-          },
+          { intent: "addImage", articleId: result.article.id, blogId, attachment, filename: featured.name },
           { method: "post" }
         );
       } else {
         setStatus({ type: "success", message: "Article created successfully!" });
         setSaving(false);
+        resetForm();
       }
     } else if (!fetcher.data?.data?.blogCreate) {
       setStatus({ type: "error", message: fetcher.data?.error ?? JSON.stringify(fetcher.data) });
@@ -971,13 +1091,14 @@ export default function Dashboard() {
     }
   }, [fetcher.data]);
 
-  // ── Featured image upload result ──
+  // ── Featured image upload result ──────────────────────────────────────────
   useEffect(() => {
     if (!imageFetcher.data) return;
     if (imageFetcher.data.error) {
       setStatus({ type: "error", message: "Article saved but featured image failed: " + JSON.stringify(imageFetcher.data.error) });
     } else {
       setStatus({ type: "success", message: "Article and featured image saved successfully!" });
+      resetForm();
     }
     setSaving(false);
   }, [imageFetcher.data]);
@@ -1002,7 +1123,7 @@ export default function Dashboard() {
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h1 style={{ fontSize: 22, fontWeight: 700, color: t.gray900, margin: 0 }}>Create blog post</h1>
-            {badge("GRAPHQL")}
+           
           </div>
           <p style={{ fontSize: 12, color: t.gray400, marginTop: 4 }}>
             Store: <span style={{ color: t.gray600, fontWeight: 500 }}>{shop}</span>
@@ -1110,13 +1231,26 @@ export default function Dashboard() {
                   <textarea value={cymbalSetup} onChange={(e) => setCymbalSetup(e.target.value)}
                     rows={3} placeholder="15 inch Special Dry K Custom Hihat..." style={S.textarea} />
                 </Field>
+
+                {/* Image pickers — upload starts immediately on file select */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <MetafieldImagePicker label="Cymbal setup image" hint="file" value={cymbalSetupImage} onChange={setCymbalSetupImage} />
-                  <MetafieldImagePicker label="Featured banner image" hint="file" value={featuredBannerImage} onChange={setFeaturedBannerImage} />
+                  <MetafieldImagePicker
+                    label="Cymbal setup image" hint="file"
+                    value={cymbalSetupImage}
+                    onChange={handleCymbalImageChange}
+                    uploadState={cymbalUploadState}
+                  />
+                  <MetafieldImagePicker
+                    label="Featured banner image" hint="file"
+                    value={featuredBannerImage}
+                    onChange={handleBannerImageChange}
+                    uploadState={bannerUploadState}
+                  />
                 </div>
                 <p style={{ fontSize: 12, color: t.gray400, marginTop: -8, marginBottom: 16 }}>
-                  Images are uploaded to Shopify Files and stored as file references.
+                  Images upload to Shopify in the background as soon as you select them.
                 </p>
+
                 <hr style={{ border: "none", borderTop: `1px solid ${t.gray100}`, margin: "16px 0" }} />
                 <div style={S.sectionEyebrow}>Q and A Answers</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1137,22 +1271,6 @@ export default function Dashboard() {
 
         {/* Sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-          {/* Blog selector */}
-          <div style={S.card}>
-            <div style={S.cardHeader}><span style={S.cardTitle}>Blog</span></div>
-            <div style={S.cardBody}>
-              <Field label="Target blog">
-                <select value={blogId} onChange={(e) => setBlogId(e.target.value)} style={S.select}>
-                  {blogs.map((b) => (
-                    <option key={b.id} value={b.id}>{b.title}</option>
-                  ))}
-                  {blogs.length === 0 && <option value="">No blogs — create one above</option>}
-                </select>
-              </Field>
-            </div>
-          </div>
-
           <div style={S.card}>
             <div style={S.cardHeader}><span style={S.cardTitle}>Organization</span></div>
             <div style={S.cardBody}>
