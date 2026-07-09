@@ -1,7 +1,6 @@
 import { unauthenticated } from "../shopify.server";
 import prisma from "../db.server"; 
 
-
 const EXTRA_SETTINGS_NAMESPACE = "subscription_app";
 
 function metaKeyForGroup(groupId) {
