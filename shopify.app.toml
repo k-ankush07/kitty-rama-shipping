@@ -1,6 +1,6 @@
 client_id = "dd79d89d4e7877c4faa808d2345b228b"
 name = "Kitty rama shipping"
-application_url = "https://fought-carried-crowd-laughing.trycloudflare.com"
+application_url = "https://marks-pentium-internationally-dana.trycloudflare.com"
 embedded = true
 
 api_version = "2024-01"
@@ -19,10 +19,14 @@ uri = "/webhooks/app/uninstalled"
 topics = [ "app/scopes_update" ]
 uri = "/webhooks/app/scopes_update"
 
+[[webhooks.subscriptions]]
+topics = ["subscription_contracts/create"]
+uri = "/webhooks/subscription_contracts/create"
+
 [access_scopes]
 scopes = "read_products,write_products,read_orders,write_orders,read_files,write_files,read_customers,read_purchase_options,write_purchase_options,read_own_subscription_contracts,write_own_subscription_contracts,read_content,write_content"
 
 [auth]
 redirect_urls = [
-  "https://fought-carried-crowd-laughing.trycloudflare.com/api/auth"
+  "https://marks-pentium-internationally-dana.trycloudflare.com/api/auth"
 ]

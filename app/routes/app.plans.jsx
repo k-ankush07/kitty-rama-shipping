@@ -1,4 +1,4 @@
-import { useLoaderData, useActionData, Form, useNavigation } from "react-router";
+import { useLoaderData, useActionData, Form, useNavigation, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useState, useRef, useEffect } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -9,6 +9,7 @@ function metaKeyForGroup(groupId) {
 }
 
 const EXTRA_SETTINGS_NAMESPACE = "subscription_app";
+const AUDIT_LOG_KEY = "audit_log";
 
 // ─── Loader ────────────────────────────────────────────────────────────────────
 
@@ -82,10 +83,8 @@ export async function loader({ request }) {
   const data = await res.json();
   const sellingPlanGroups = data.data.sellingPlanGroups.edges.map((e) => e.node);
 
-  // ── Fetch all extra-settings metafields from the Shop in a single request ──
-  // (previously this ran one query per group against SellingPlanGroup, which
-  // doesn't support metafields at all and always failed silently)
   let metafieldsByKey = new Map();
+  let auditLog = [];
   try {
     const metaRes = await admin.graphql(`
       query {
@@ -99,6 +98,15 @@ export async function loader({ request }) {
     const metaData = await metaRes.json();
     const edges = metaData.data?.shop?.metafields?.edges || [];
     metafieldsByKey = new Map(edges.map(({ node }) => [node.key, node.value]));
+
+    const rawAuditLog = metafieldsByKey.get(AUDIT_LOG_KEY);
+    if (rawAuditLog) {
+      try {
+        auditLog = JSON.parse(rawAuditLog);
+      } catch (_) {
+        auditLog = [];
+      }
+    }
   } catch (_) {
     // If this fails for any reason, just fall back to no extra settings
     // rather than breaking the whole page.
@@ -117,7 +125,7 @@ export async function loader({ request }) {
     return { ...group, extraSettings };
   });
 
-  return { sellingPlanGroups: groupsWithMeta };
+  return { sellingPlanGroups: groupsWithMeta, auditLog: [...auditLog].reverse() };
 }
 
 // ─── Action ────────────────────────────────────────────────────────────────────
@@ -159,7 +167,7 @@ export async function action({ request }) {
     // Automatic actions (saved to metafield)
     const allowAutomaticActions = formData.get("allowAutomaticActions") === "true";
     let automaticActions = [];
-    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) {}
+    try { automaticActions = JSON.parse(formData.get("automaticActions") || "[]"); } catch (_) { }
 
     // Customer product changes (saved to metafield)
     const allowSwaps = formData.get("allowSwaps") === "on" || formData.get("allowSwaps") === "true";
@@ -168,7 +176,7 @@ export async function action({ request }) {
     const keepDiscounts = formData.get("keepDiscounts") === "on" || formData.get("keepDiscounts") === "true";
 
     let selectedProductIds = [];
-    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) {}
+    try { selectedProductIds = JSON.parse(formData.get("selectedProductIds") || "[]"); } catch (_) { }
 
     // ── Build pricing policies ──
     const pricingPolicies = [];
@@ -325,7 +333,7 @@ export async function action({ request }) {
   if (intent === "assignProduct") {
     const planGroupId = formData.get("planGroupId");
     let productIds = [];
-    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) {}
+    try { productIds = JSON.parse(formData.get("productIds") || "[]"); } catch (_) { }
     if (productIds.length === 0) return { error: "No products selected." };
 
     const res = await admin.graphql(`
@@ -437,7 +445,7 @@ const ACTION_ICONS = {
   REMOVE_VARIANT: "✂️",
 };
 
-const NEEDS_VARIANT_PICKER = ["VARIANT_SWAP", "REMOVE_VARIANT"];
+const NEEDS_VARIANT_PICKER = ["PRODUCT_SWAP", "VARIANT_SWAP", "REMOVE_VARIANT"];
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
@@ -590,6 +598,7 @@ function AddActionDropdown({ onAdd }) {
 
 function ActionRow({ action, index, onChange, onRemove }) {
   const shopify = useAppBridge();
+  const fetcher = useFetcher();
   const needsVariant = NEEDS_VARIANT_PICKER.includes(action.type);
   const hasProduct = action.productTitle || action.variantTitle;
 
@@ -613,13 +622,16 @@ function ActionRow({ action, index, onChange, onRemove }) {
       });
     } else {
       const product = selected[0];
+      const res = await fetch(`/app/api/product-variant?productId=${encodeURIComponent(product.id)}`);
+      const data = await res.json();
+
       onChange(index, {
         ...action,
         productId: product.id,
         productTitle: product.title,
         productImage: product.images?.[0]?.originalSrc,
-        variantId: undefined,
-        variantTitle: undefined,
+        variantId: data.variantId,
+        variantTitle: data.variantTitle !== "Default Title" ? data.variantTitle : undefined,
         variantImage: undefined,
       });
     }
@@ -983,17 +995,82 @@ function ExtraSettingsBadges({ group }) {
   );
 }
 
+// ─── Activity Log ──────────────────────────────────────────────────────────────
+
+function formatAuditTimestamp(iso) {
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return iso;
+  }
+}
+
+const AUDIT_ACTION_LABELS = {
+  SHIPPING_DISCOUNT: "Shipping discount",
+  QUANTITY_CHANGE: "Quantity change",
+  PRODUCT_SWAP: "Product swap",
+  VARIANT_SWAP: "Variant swap",
+  ADD_PRODUCT: "Add product",
+  REMOVE_PRODUCT: "Remove product",
+  REMOVE_VARIANT: "Remove variant",
+};
+
+function ActivityLogPanel({ auditLog, sellingPlanGroups }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!auditLog || auditLog.length === 0) return null;
+
+  const normalizeId = (id) => id?.startsWith("gid://") ? id : `gid://shopify/SellingPlanGroup/${id}`;
+  const groupNameById = new Map(sellingPlanGroups.map((g) => [normalizeId(g.id), g.name]));
+
+  const visibleEntries = expanded ? auditLog : auditLog.slice(0, 5);
+
+  return (
+    <SectionCard title={`Activity Log (${auditLog.length})`}>
+      <p style={{ ...s.hint, marginBottom: 12 }}>
+        Automatic actions (shipping discounts, quantity changes, product swaps) applied
+        to upcoming billing cycles before they were charged.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {visibleEntries.map((entry, i) => (
+          <div key={i} style={s.auditRow}>
+            <span style={{ fontSize: 16 }}>{entry.status === "success" ? "✅" : "❌"}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>
+                {groupNameById.get(normalizeId(entry.groupId)) || "Unknown plan"} — Cycle #{entry.cycleIndex}
+              </div>
+              <div style={{ fontSize: 12, color: "#6b7280" }}>
+                {(entry.actions || []).map((a) => AUDIT_ACTION_LABELS[a] || a).join(", ")}
+              </div>
+              {entry.status === "failed" && entry.error && (
+                <div style={{ fontSize: 12, color: "#991b1b", marginTop: 2 }}>{entry.error}</div>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: "#9ca3af", whiteSpace: "nowrap" }}>
+              {formatAuditTimestamp(entry.appliedAt)}
+            </div>
+          </div>
+        ))}
+      </div>
+      {auditLog.length > 5 && (
+        <button
+          type="button"
+          style={{ ...s.assignProductsBtn, marginTop: 12 }}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "▲ Show less" : `▼ Show all ${auditLog.length}`}
+        </button>
+      )}
+    </SectionCard>
+  );
+}
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PlansPage() {
-  const { sellingPlanGroups } = useLoaderData();
+  const { sellingPlanGroups, auditLog } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const [showForm, setShowForm] = useState(false);
   const isSubmitting = navigation.state === "submitting";
-
-  console.log(sellingPlanGroups)
-
   useEffect(() => {
     if (actionData?.created) setShowForm(false);
   }, [actionData]);
@@ -1010,6 +1087,8 @@ export default function PlansPage() {
       </div>
 
       {showForm && <CreatePlanForm onCancel={() => setShowForm(false)} isSubmitting={isSubmitting} />}
+
+      <ActivityLogPanel auditLog={auditLog} sellingPlanGroups={sellingPlanGroups} />
 
       <SectionCard title={`All Selling Plan Groups (${sellingPlanGroups.length})`}>
         {sellingPlanGroups.length === 0 ? (
@@ -1120,4 +1199,5 @@ const s = {
   selectedProduct: { display: "flex", alignItems: "center", gap: 10, marginTop: 8, padding: "8px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8 },
   selectProductBtn: { padding: "7px 14px", background: "white", color: "#4f46e5", border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer", fontWeight: 500, fontSize: 13 },
   changeProductBtn: { padding: "4px 10px", background: "white", color: "#374151", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12, marginLeft: "auto" },
+  auditRow: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8 },
 };
