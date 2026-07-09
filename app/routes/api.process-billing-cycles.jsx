@@ -7,6 +7,7 @@ function metaKeyForGroup(groupId) {
   return `extra_settings_${numericId}`;
 }
 
+
 export const action = async ({ request }) => {
   const secret = request.headers.get("x-cron-secret");
   if (secret !== process.env.CRON_SECRET) {
