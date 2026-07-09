@@ -7,7 +7,6 @@ function metaKeyForGroup(groupId) {
   const numericId = groupId.split("/").pop();
   return `extra_settings_${numericId}`;
 }
-
 const EXTRA_SETTINGS_NAMESPACE = "subscription_app";
 const AUDIT_LOG_KEY = "audit_log";
 

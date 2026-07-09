@@ -1,6 +1,6 @@
 client_id = "dd79d89d4e7877c4faa808d2345b228b"
 name = "Kitty rama shipping"
-application_url = "https://marks-pentium-internationally-dana.trycloudflare.com"
+application_url = "https://announce-broken-minneapolis-kodak.trycloudflare.com"
 embedded = true
 
 api_version = "2024-01"
@@ -28,5 +28,5 @@ scopes = "read_products,write_products,read_orders,write_orders,read_files,write
 
 [auth]
 redirect_urls = [
-  "https://marks-pentium-internationally-dana.trycloudflare.com/api/auth"
+  "https://announce-broken-minneapolis-kodak.trycloudflare.com/api/auth"
 ]

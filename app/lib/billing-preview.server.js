@@ -1,5 +1,4 @@
 const EXTRA_SETTINGS_NAMESPACE = "subscription_app";
-
 function metaKeyForGroup(groupId) {
   const numericId = groupId.split("/").pop();
   return `extra_settings_${numericId}`;
@@ -9,14 +8,14 @@ function collectActionsForCycle(settings, cycleIndex) {
   const actions = [];
   if (!settings) return actions;
 
-  if (settings.shippingDiscount?.enabled && settings.shippingDiscount.after === cycleIndex) {
+  if (settings.shippingDiscount?.enabled && cycleIndex >= settings.shippingDiscount.after) {
     actions.push({ ...settings.shippingDiscount, type: "SHIPPING_DISCOUNT" });
   }
-  if (settings.quantityChange?.enabled && settings.quantityChange.after === cycleIndex) {
+  if (settings.quantityChange?.enabled && cycleIndex >= settings.quantityChange.after) {
     actions.push({ ...settings.quantityChange, type: "QUANTITY_CHANGE" });
   }
   for (const auto of settings.automaticActions || []) {
-    if (auto.afterCycle === cycleIndex) {
+    if (cycleIndex >= auto.afterCycle) {
       actions.push({ ...auto, type: auto.type });
     }
   }
@@ -86,13 +85,20 @@ async function getContractPreview(admin, contractId) {
     }
   }
 
-  // ── Naya approach: singular subscriptionBillingCycle query, date selector se ──
-  // Iske liye contract.nextBillingDate ka use karte hain — yeh directly wahi
-  // upcoming cycle laata hai, koi range/status filter ki zaroorat nahi.
+  // ── Resolve the current/upcoming billing cycle using the CURRENT time ──
+  // We intentionally query with "now" instead of contract.nextBillingDate.
+  // Shopify's nextBillingDate field on the contract can lag behind after a
+  // cycle is actually billed — especially noticeable on dev/test stores —
+  // which meant this preview kept reporting the already-billed cycle #1
+  // (with its old expected date) even after that cycle's order existed.
+  // Passing "now" makes Shopify resolve whichever cycle currently covers
+  // the present moment (i.e. the real upcoming/current cycle), independent
+  // of whether the contract's own cached nextBillingDate has caught up.
   let cycleIndex = null;
   let nextBillingDate = contract.nextBillingDate;
 
-  if (contract.nextBillingDate) {
+  {
+    const nowIso = new Date().toISOString();
     const cycleRes = await admin.graphql(`
       query getCycleByDate($contractId: ID!, $date: DateTime!) {
         subscriptionBillingCycle(
@@ -103,7 +109,7 @@ async function getContractPreview(admin, contractId) {
           skipped
         }
       }
-    `, { variables: { contractId, date: contract.nextBillingDate } });
+    `, { variables: { contractId, date: nowIso } });
 
     const cycleData = await cycleRes.json();
     const cycle = cycleData.data?.subscriptionBillingCycle;

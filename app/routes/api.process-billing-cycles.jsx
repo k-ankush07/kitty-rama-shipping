@@ -1,6 +1,5 @@
 import { unauthenticated } from "../shopify.server";
 import prisma from "../db.server"; 
-
 const EXTRA_SETTINGS_NAMESPACE = "subscription_app";
 
 function metaKeyForGroup(groupId) {
@@ -113,6 +112,12 @@ function getExtraSettingsForGroup(metafieldsByKey, groupId) {
 // ─────────────────────────────────────────────────────────────────────────────
 const PROCESSED_CYCLES_KEY = "processed_billing_cycles";
 
+// Separate tracker for cycles we've already *charged* (created a billing
+// attempt for). This is intentionally kept apart from PROCESSED_CYCLES_KEY
+// (which only tracks draft edits) because a cycle might have no automatic
+// actions at all and still need to be charged.
+const CHARGED_CYCLES_KEY = "charged_billing_cycles";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Audit log
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,16 +163,16 @@ async function appendAuditLog(admin, shopId, entry) {
   });
 }
 
-async function getProcessedCycles(admin, shopId) {
+async function getMarkerSet(admin, shopId, key) {
   const res = await admin.graphql(`
-    query {
+    query getMarkerSet($namespace: String!, $key: String!) {
       shop {
-        metafield(namespace: "${EXTRA_SETTINGS_NAMESPACE}", key: "${PROCESSED_CYCLES_KEY}") {
+        metafield(namespace: $namespace, key: $key) {
           value
         }
       }
     }
-  `);
+  `, { variables: { namespace: EXTRA_SETTINGS_NAMESPACE, key } });
   const data = await res.json();
   const raw = data.data?.shop?.metafield?.value;
   if (!raw) return new Set();
@@ -178,9 +183,17 @@ async function getProcessedCycles(admin, shopId) {
   }
 }
 
-async function markCycleProcessed(admin, shopId, processedSet, marker) {
-  processedSet.add(marker);
-  const trimmed = Array.from(processedSet).slice(-500);
+async function getProcessedCycles(admin, shopId) {
+  return getMarkerSet(admin, shopId, PROCESSED_CYCLES_KEY);
+}
+
+async function getChargedCycles(admin, shopId) {
+  return getMarkerSet(admin, shopId, CHARGED_CYCLES_KEY);
+}
+
+async function addMarker(admin, shopId, key, markerSet, marker) {
+  markerSet.add(marker);
+  const trimmed = Array.from(markerSet).slice(-500);
   await admin.graphql(`
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -192,12 +205,20 @@ async function markCycleProcessed(admin, shopId, processedSet, marker) {
       metafields: [{
         ownerId: shopId,
         namespace: EXTRA_SETTINGS_NAMESPACE,
-        key: PROCESSED_CYCLES_KEY,
+        key,
         type: "json",
         value: JSON.stringify(trimmed),
       }],
     },
   });
+}
+
+async function markCycleProcessed(admin, shopId, processedSet, marker) {
+  return addMarker(admin, shopId, PROCESSED_CYCLES_KEY, processedSet, marker);
+}
+
+async function markCycleCharged(admin, shopId, chargedSet, marker) {
+  return addMarker(admin, shopId, CHARGED_CYCLES_KEY, chargedSet, marker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +227,7 @@ async function markCycleProcessed(admin, shopId, processedSet, marker) {
 async function processShop(admin) {
   const { shopId, sellingPlanIdToGroupId, metafieldsByKey } = await loadPlanGroupsAndSettings(admin);
   const processedCycles = await getProcessedCycles(admin, shopId);
+  const chargedCycles = await getChargedCycles(admin, shopId);
 
   // Active contracts — now also fetching nextBillingDate, needed for the
   // singular subscriptionBillingCycle(date selector) lookup below.
@@ -228,34 +250,20 @@ async function processShop(admin) {
   const contracts = contractsData.data.subscriptionContracts.edges.map((e) => e.node);
 
   const edited = [];
+  const charged = [];
   const skipped = [];
 
   for (const contract of contracts) {
-    const sellingPlanId = contract.lines.edges[0]?.node?.sellingPlanId;
-    if (!sellingPlanId) {
-      skipped.push({ contractId: contract.id, reason: "no selling plan" });
-      continue;
-    }
-
-    const groupId = sellingPlanIdToGroupId.get(sellingPlanId);
-    if (!groupId) {
-      skipped.push({ contractId: contract.id, reason: "no matching plan group" });
-      continue;
-    }
-
-    const settings = getExtraSettingsForGroup(metafieldsByKey, groupId);
-    if (!settings) {
-      skipped.push({ contractId: contract.id, reason: "no extra settings for group" });
-      continue;
-    }
-
     if (!contract.nextBillingDate) {
       skipped.push({ contractId: contract.id, reason: "no nextBillingDate" });
       continue;
     }
 
     // ── Find the upcoming cycle using the singular subscriptionBillingCycle
-    // query with a date selector. ──
+    // query with a date selector. This step is needed for every active
+    // contract (not just ones with matching plan groups / extra settings),
+    // because we still need to charge cycles that have no automatic actions
+    // configured at all. ──
     const cycleRes = await admin.graphql(`
       query getCycleByDate($contractId: ID!, $date: DateTime!) {
         subscriptionBillingCycle(
@@ -263,6 +271,7 @@ async function processShop(admin) {
         ) {
           cycleIndex
           billingAttemptExpectedDate
+          skipped
         }
       }
     `, { variables: { contractId: contract.id, date: contract.nextBillingDate } });
@@ -274,50 +283,156 @@ async function processShop(admin) {
       continue;
     }
 
-    const cycleIndex = cycle.cycleIndex;
-    const marker = `${contract.id}:${cycleIndex}`;
-    if (processedCycles.has(marker)) {
-      skipped.push({ contractId: contract.id, cycleIndex, reason: "already processed" });
+    if (cycle.skipped) {
+      skipped.push({ contractId: contract.id, cycleIndex: cycle.cycleIndex, reason: "cycle marked skipped" });
       continue;
     }
 
-    const actionsForThisCycle = collectActionsForCycle(settings, cycleIndex);
-    if (actionsForThisCycle.length === 0) {
-      skipped.push({ contractId: contract.id, cycleIndex, reason: "no actions configured for this cycle" });
+    const cycleIndex = cycle.cycleIndex;
+    const editMarker = `${contract.id}:${cycleIndex}`;
+
+    // ── Is this cycle actually due yet? ──
+    // subscriptionBillingCycleCharge itself only rejects cycles that are
+    // MORE than 24 hours in the future — it happily charges anything due
+    // within the next 24 hours, which is too early for us (we only want to
+    // charge cycles that are due NOW or already past). Without this check,
+    // every cron run would fire early charges for any cycle landing later
+    // today/tomorrow, which is what caused orders to appear before their
+    // expected time.
+    const expectedDate = cycle.billingAttemptExpectedDate
+      ? new Date(cycle.billingAttemptExpectedDate)
+      : null;
+    const now = new Date();
+    if (!expectedDate || expectedDate.getTime() > now.getTime()) {
+      skipped.push({
+        contractId: contract.id,
+        cycleIndex,
+        reason: "not due yet",
+        expectedDate: cycle.billingAttemptExpectedDate || null,
+      });
+      continue;
+    }
+
+    // ── Step 1: apply automatic actions (product swap / qty change /
+    // shipping discount) to this cycle's draft, if any are configured and
+    // not already applied. This only touches the draft — it does NOT create
+    // an order or charge the customer. ──
+    const sellingPlanId = contract.lines.edges[0]?.node?.sellingPlanId;
+    const groupId = sellingPlanId ? sellingPlanIdToGroupId.get(sellingPlanId) : null;
+    const settings = groupId ? getExtraSettingsForGroup(metafieldsByKey, groupId) : null;
+    const actionsForThisCycle = settings ? collectActionsForCycle(settings, cycleIndex) : [];
+
+    if (actionsForThisCycle.length > 0 && !processedCycles.has(editMarker)) {
+      try {
+        await applyActionsToCycle(admin, contract.id, cycleIndex, actionsForThisCycle);
+        await markCycleProcessed(admin, shopId, processedCycles, editMarker);
+        await appendAuditLog(admin, shopId, {
+          contractId: contract.id,
+          groupId,
+          cycleIndex,
+          actions: actionsForThisCycle.map((a) => a.type),
+          status: "success",
+        });
+        edited.push({ contractId: contract.id, cycleIndex, actions: actionsForThisCycle.map((a) => a.type) });
+      } catch (err) {
+        await appendAuditLog(admin, shopId, {
+          contractId: contract.id,
+          groupId,
+          cycleIndex,
+          actions: actionsForThisCycle.map((a) => a.type),
+          status: "failed",
+          error: String(err?.message || err),
+        });
+        console.error(`[process-billing-cycles] failed to edit contract ${contract.id}:`, err);
+        skipped.push({
+          contractId: contract.id,
+          cycleIndex,
+          reason: "error during draft apply — cycle NOT charged, will retry next run",
+          error: String(err?.message || err),
+        });
+        // Don't attempt to charge a cycle whose intended edits failed to
+        // apply — better to retry the whole thing next run than to bill
+        // the customer for the wrong contents.
+        continue;
+      }
+    }
+
+    // ── Step 2: actually charge the cycle so Shopify creates the order.
+    // This is the step that was previously missing — draft edits alone
+    // never produce an order. subscriptionBillingCycleCharge only allows
+    // one successful charge per billing cycle, but we also track our own
+    // marker so we don't even attempt a duplicate call. ──
+    const chargeMarker = `${contract.id}:${cycleIndex}`;
+    if (chargedCycles.has(chargeMarker)) {
+      skipped.push({ contractId: contract.id, cycleIndex, reason: "already charged" });
       continue;
     }
 
     try {
-      await applyActionsToCycle(admin, contract.id, cycleIndex, actionsForThisCycle);
-      await markCycleProcessed(admin, shopId, processedCycles, marker);
+      const chargeRes = await admin.graphql(`
+        mutation ChargeSubscriptionCycle($contractId: ID!, $index: Int!) {
+          subscriptionBillingCycleCharge(
+            subscriptionContractId: $contractId
+            billingCycleSelector: { index: $index }
+          ) {
+            subscriptionBillingAttempt {
+              id
+              ready
+            }
+            userErrors { field message }
+          }
+        }
+      `, { variables: { contractId: contract.id, index: cycleIndex } });
+
+      const chargeData = await chargeRes.json();
+      const chargePayload = chargeData.data?.subscriptionBillingCycleCharge;
+      const chargeErrors = chargePayload?.userErrors;
+
+      if (chargeErrors?.length) {
+        throw new Error(`subscriptionBillingCycleCharge failed: ${chargeErrors[0].message}`);
+      }
+
+      const attempt = chargePayload?.subscriptionBillingAttempt;
+      await markCycleCharged(admin, shopId, chargedCycles, chargeMarker);
       await appendAuditLog(admin, shopId, {
         contractId: contract.id,
         groupId,
         cycleIndex,
-        actions: actionsForThisCycle.map((a) => a.type),
+        actions: ["CHARGE"],
         status: "success",
+        billingAttemptId: attempt?.id || null,
       });
-      edited.push({ contractId: contract.id, cycleIndex, actions: actionsForThisCycle.map((a) => a.type) });
+      charged.push({
+        contractId: contract.id,
+        cycleIndex,
+        billingAttemptId: attempt?.id || null,
+        // Billing attempts are async — `ready: true` means the order is
+        // already available, `false` means it's still processing and you
+        // should check back (e.g. via the subscriptionBillingAttempt query
+        // or the subscription_billing_attempts/challenged /
+        // orders/create webhooks) rather than assume failure.
+        ready: attempt?.ready ?? null,
+      });
     } catch (err) {
       await appendAuditLog(admin, shopId, {
         contractId: contract.id,
         groupId,
         cycleIndex,
-        actions: actionsForThisCycle.map((a) => a.type),
+        actions: ["CHARGE"],
         status: "failed",
         error: String(err?.message || err),
       });
-      console.error(`[process-billing-cycles] failed for contract ${contract.id}:`, err);
+      console.error(`[process-billing-cycles] failed to charge contract ${contract.id}:`, err);
       skipped.push({
         contractId: contract.id,
         cycleIndex,
-        reason: "error during apply",
+        reason: "error during charge",
         error: String(err?.message || err),
       });
     }
   }
 
-  return { contractsChecked: contracts.length, edited, skipped };
+  return { contractsChecked: contracts.length, edited, charged, skipped };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -328,16 +443,24 @@ function collectActionsForCycle(settings, cycleIndex) {
   const actions = [];
   if (!settings) return actions;
 
-  if (settings.shippingDiscount?.enabled && settings.shippingDiscount.after === cycleIndex) {
+  // NOTE: this uses >= instead of === on purpose. With ===, an action only
+  // ever fired on the exact cycle it was configured for (e.g. "after: 1"
+  // only applied to cycle #1), so a daily "every 1 day" plan would revert
+  // to its original quantity/product/shipping on every cycle after the
+  // first. With >=, once a cycle reaches the configured threshold, the
+  // action keeps re-applying on that cycle and every cycle after it —
+  // which is what "every day this should apply" actually means for a
+  // recurring plan.
+  if (settings.shippingDiscount?.enabled && cycleIndex >= settings.shippingDiscount.after) {
     actions.push({ ...settings.shippingDiscount, type: "SHIPPING_DISCOUNT" }); 
   }
 
-  if (settings.quantityChange?.enabled && settings.quantityChange.after === cycleIndex) {
+  if (settings.quantityChange?.enabled && cycleIndex >= settings.quantityChange.after) {
     actions.push({ ...settings.quantityChange, type: "QUANTITY_CHANGE" }); 
   }
 
   for (const auto of settings.automaticActions || []) {
-    if (auto.afterCycle === cycleIndex) {
+    if (cycleIndex >= auto.afterCycle) {
       actions.push({ ...auto, type: auto.type }); 
     }
   }

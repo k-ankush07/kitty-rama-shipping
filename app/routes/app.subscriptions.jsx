@@ -5,7 +5,7 @@ import { getContractPreview } from "../lib/billing-preview.server";
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
-  const url = new URL(request.url);
+ const url = new URL(request.url);
   let contractId = url.searchParams.get("id");
 
   if (!contractId) {
@@ -25,6 +25,7 @@ export const loader = async ({ request }) => {
   } catch (err) {
     return { error: String(err?.message || err) };
   }
+  
 };
 
 export default function SubscriptionDetailPage() {

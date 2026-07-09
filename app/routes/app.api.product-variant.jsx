@@ -25,6 +25,7 @@ export const loader = async ({ request }) => {
   const data = await res.json();
   const variant = data.data?.product?.variants?.edges?.[0]?.node;
 
+  
   return new Response(JSON.stringify({ variantId: variant?.id || null, variantTitle: variant?.title || null }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
