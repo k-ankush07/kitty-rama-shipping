@@ -230,8 +230,9 @@ async function processShop(admin) {
   const processedCycles = await getProcessedCycles(admin, shopId);
   const chargedCycles = await getChargedCycles(admin, shopId);
 
-  // Active contracts — now also fetching nextBillingDate, needed for the
-  // singular subscriptionBillingCycle(date selector) lookup below.
+  // Active contracts. NOTE: we no longer rely on nextBillingDate to find the
+  // current cycle (see below) — it's fetched here only for optional
+  // debugging/logging context, never as the date selector.
   const contractsRes = await admin.graphql(`
     query {
       subscriptionContracts(first: 50, query: "status:active") {
@@ -255,16 +256,25 @@ async function processShop(admin) {
   const skipped = [];
 
   for (const contract of contracts) {
-    if (!contract.nextBillingDate) {
-      skipped.push({ contractId: contract.id, reason: "no nextBillingDate" });
-      continue;
-    }
-
-    // ── Find the upcoming cycle using the singular subscriptionBillingCycle
-    // query with a date selector. This step is needed for every active
-    // contract (not just ones with matching plan groups / extra settings),
-    // because we still need to charge cycles that have no automatic actions
-    // configured at all. ──
+    // ── Find the upcoming/current cycle using the singular
+    // subscriptionBillingCycle query with a DATE selector of "now" — NOT
+    // contract.nextBillingDate.
+    //
+    // contract.nextBillingDate is explicitly documented by Shopify as
+    // "managed by the apps" — Shopify does NOT auto-advance it after a
+    // cycle bills. Since nothing in this app ever calls
+    // subscriptionContractSetNextBillingDate, that field stays frozen at
+    // whatever it was when the contract was created. For a fast-moving plan
+    // (e.g. "every day"), that stale date keeps resolving back to cycle #1
+    // — the ORIGIN cycle, which already billed as part of checkout — and
+    // subscriptionBillingCycleContractEdit correctly rejects opening a
+    // billing-cycle-scoped draft on an already-billed cycle with
+    // "Billing cycle selector is invalid". That's the repeating error.
+    //
+    // Using "now" instead always resolves to whatever cycle is actually
+    // current/due, exactly like the subscription-detail.jsx loader already
+    // does (see its "same fix as billing-preview" comment). ──
+    const nowIso = new Date().toISOString();
     const cycleRes = await admin.graphql(`
       query getCycleByDate($contractId: ID!, $date: DateTime!) {
         subscriptionBillingCycle(
@@ -275,12 +285,12 @@ async function processShop(admin) {
           skipped
         }
       }
-    `, { variables: { contractId: contract.id, date: contract.nextBillingDate } });
+    `, { variables: { contractId: contract.id, date: nowIso } });
 
     const cycleData = await cycleRes.json();
     const cycle = cycleData.data?.subscriptionBillingCycle;
     if (!cycle) {
-      skipped.push({ contractId: contract.id, reason: "no cycle found for nextBillingDate" });
+      skipped.push({ contractId: contract.id, reason: "no cycle found for current date" });
       continue;
     }
 

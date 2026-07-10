@@ -1,6 +1,6 @@
 client_id = "dd79d89d4e7877c4faa808d2345b228b"
 name = "Kitty rama shipping"
-application_url = "https://retail-proudly-veterans-cigarette.trycloudflare.com"
+application_url = "https://chancellor-suggestion-have-clubs.trycloudflare.com"
 embedded = true
 
 api_version = "2024-01"
@@ -28,5 +28,5 @@ scopes = "read_products,write_products,read_orders,write_orders,read_files,write
 
 [auth]
 redirect_urls = [
-  "https://retail-proudly-veterans-cigarette.trycloudflare.com/api/auth"
+  "https://chancellor-suggestion-have-clubs.trycloudflare.com/api/auth"
 ]
