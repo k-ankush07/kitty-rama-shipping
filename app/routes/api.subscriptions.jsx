@@ -92,9 +92,59 @@ export const loader = async ({ request }) => {
 
     const contracts = data?.customer?.subscriptionContracts?.edges?.map((e) => e.node) ?? [];
 
+    const productIds = [
+      ...new Set(
+        contracts.flatMap((contract) =>
+          contract.lines?.edges?.map((edge) => edge.node.productId).filter(Boolean) ?? []
+        )
+      ),
+    ];
+
+    const productImagesMap = {};
+    if (productIds.length > 0) {
+      const imagesRes = await admin.graphql(
+        `#graphql
+        query GetProductsByIds($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              featuredImage {
+                url
+              }
+              images(first: 1) {
+                edges {
+                  node {
+                    url
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        { variables: { ids: productIds } }
+      );
+
+      const imagesData = await imagesRes.json();
+      const nodes = imagesData.data?.nodes ?? [];
+      nodes.forEach((node) => {
+        if (node?.id) {
+          productImagesMap[node.id] =
+            node.images?.edges?.[0]?.node?.url || node.featuredImage?.url || null;
+        }
+      });
+    }
+
     // Fetch the REAL upcoming billing cycles for a contract, since
     // `nextBillingDate` on the contract does not reliably reflect
     // individual cycle edits made via subscriptionBillingCycleScheduleEdit.
+    //
+    // IMPORTANT: this API version requires the selector argument named
+    // exactly `billingCyclesDateRangeSelector`, typed as
+    // `SubscriptionBillingCyclesDateRangeSelector!` (NOT a bare
+    // `contractId` + `first`, and NOT `billingCyclesDateRange`). Passing
+    // just `contractId`/`first` throws:
+    //   "subscriptionBillingCycles requires exactly one of
+    //    billing_cycles_date_range_selector, billing_cycles_index_range_selector"
     async function fetchUpcomingBillingCycles(contractId) {
       const now = new Date();
       const startDate = now.toISOString();
@@ -105,11 +155,11 @@ export const loader = async ({ request }) => {
       try {
         const cyclesRes = await admin.graphql(
           `#graphql
-          query GetUpcomingBillingCycles($contractId: ID!, $startDate: DateTime!, $endDate: DateTime!) {
+          query GetUpcomingBillingCycles($contractId: ID!, $rangeSelector: SubscriptionBillingCyclesDateRangeSelector!) {
             subscriptionBillingCycles(
-              first: 6
               contractId: $contractId
-              billingCyclesDateRange: { startDate: $startDate, endDate: $endDate }
+              first: 6
+              billingCyclesDateRangeSelector: $rangeSelector
             ) {
               edges {
                 node {
@@ -122,7 +172,12 @@ export const loader = async ({ request }) => {
               }
             }
           }`,
-          { variables: { contractId, startDate, endDate } }
+          {
+            variables: {
+              contractId,
+              rangeSelector: { startDate, endDate },
+            },
+          }
         );
 
         const cyclesPayload = await cyclesRes.json();
@@ -164,8 +219,14 @@ export const loader = async ({ request }) => {
           console.error("Policy lookup failed for", contractIdNumeric, e.message);
         }
 
-        // Line item totals se subtotal compute karo
-        const lines = contract.lines?.edges?.map((e) => e.node) ?? [];
+        // Line item totals se subtotal compute karo, plus attach product images
+        const lines = contract.lines?.edges?.map((e) => {
+          const node = e.node;
+          return {
+            ...node,
+            imageUrl: node.productId ? productImagesMap[node.productId] || null : null,
+          };
+        }) ?? [];
         const subtotal = lines.reduce(
           (sum, line) => sum + parseFloat(line.lineDiscountedPrice?.amount ?? 0),
           0
@@ -183,6 +244,7 @@ export const loader = async ({ request }) => {
 
         return {
           ...contract,
+          lines: { edges: lines.map((line) => ({ node: line })) },
           nextBillingDate: realNextBillingDate,
           nextBillingCycleIndex: nextCycle?.cycleIndex ?? null,
           upcomingCycles, // [{ cycleIndex, billingAttemptExpectedDate, status, skipped, edited }, ...]
