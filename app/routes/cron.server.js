@@ -1,5 +1,4 @@
 import cron from "node-cron";
-
 let started = false;
 
 export function startBillingCycleCron() {
