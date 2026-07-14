@@ -29,6 +29,7 @@ export default async () => {
 
 // Extract just the "YYYY-MM-DD" part from any date-like input (string or Date),
 // treating it as a calendar date, not a timezone-sensitive instant.
+
 function toDateOnlyString(value) {
     if (!value) return value;
 
