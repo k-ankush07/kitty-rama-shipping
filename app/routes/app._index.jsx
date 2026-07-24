@@ -1901,7 +1901,7 @@ function App() {
             </div>
             <div className="field-row">
               <FieldGroup label="Artist Type" required>
-                <select className="field-input" style={{ appearance: 'auto', color: '#999' }}>
+                <select className="field-input" style={{ color: '#5C5D60' }}>
                   <option value="">Select an option...</option>
                   <option>Professional</option>
                   <option>Semi-Professional</option>
@@ -1909,7 +1909,7 @@ function App() {
                 </select>
               </FieldGroup>
               <FieldGroup label="Are you an Educator or Performer?" required>
-                <select className="field-input" style={{ appearance: 'auto', color: '#999' }}>
+                <select className="field-input" style={{ color: '#5C5D60' }}>
                   <option value="">Select an option...</option>
                   <option>Educator</option>
                   <option>Performer</option>
@@ -1918,7 +1918,7 @@ function App() {
               </FieldGroup>
             </div>
             <FieldGroup label="Country" required>
-              <select className="field-input" style={{ appearance: 'auto', color: '#999' }}>
+              <select className="field-input" style={{ color: '#5C5D60' }}>
                 <option value="">Select your country...</option>
                 <option>United States</option>
                 <option>United Kingdom</option>
@@ -2072,7 +2072,7 @@ function App() {
               <FieldGroup label="Video 2" hint="Additional video you would like to feature. Please list the full URL.">
                 <div style={{ position: 'relative', marginBottom: 32 }}>
                   <input className="field-input" type="url" placeholder="https://youtube.com/... or https://vimeo.com/..." style={{ paddingRight: 36 }} />
-                  <svg style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)',  }} width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <svg style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', }} width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M15.3334 4.6665L10.6667 7.99984L15.3334 11.3332V4.6665Z" stroke="black" />
                     <path d="M9.33342 3.3335H2.00008C1.2637 3.3335 0.666748 3.93045 0.666748 4.66683V11.3335C0.666748 12.0699 1.2637 12.6668 2.00008 12.6668H9.33342C10.0698 12.6668 10.6667 12.0699 10.6667 11.3335V4.66683C10.6667 3.93045 10.0698 3.3335 9.33342 3.3335Z" stroke="black" />
                   </svg>

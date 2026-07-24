@@ -1,19 +1,7 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 
-export default function App() {
-  return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <link rel="preconnect" href="https://cdn.shopify.com/" />
-        <link
-          rel="stylesheet"
-          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        />
-        <title>Zildjian Artist Profile</title>
-        <style>{`
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+const globalStyles = `
+* { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Century Gothic, CenturyGothic, AppleGothic, sans-serif; background: #f5f5f5; color: #222; min-height: 100vh; }
   a { color: inherit; text-decoration: none; }
   input, select, textarea, button { font-family: Century Gothic, CenturyGothic, AppleGothic, sans-serif; }
@@ -152,10 +140,23 @@ export default function App() {
     font-size: 14px;
 }
 
-label.picture-radio input[type="radio"] {
+label.picture-radio input[type='radio'] {
     width: 16px;
     height: 16px;
 }
+   
+select.field-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  color: #333;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='7' viewBox='0 0 10 7' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M9.29023 0.296501C9.78106 0.729587 9.82787 1.47857 9.39478 1.9694L6.3453 5.42548C5.54911 6.32783 4.14213 6.32783 3.34595 5.42548L0.29646 1.9694C-0.136626 1.47857 -0.0898143 0.729587 0.401017 0.296501C0.891849 -0.136585 1.64083 -0.0897736 2.07392 0.401058L4.84562 3.54232L7.61732 0.401059C8.05041 -0.0897726 8.79939 -0.136585 9.29023 0.296501Z' fill='%23000000'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 10px 7px;
+  padding-right: 36px;
+}
+
   .upload-icon {
     display: flex; align-items: center; justify-content: center;
     color: #ccc; font-size: 18px; margin-bottom: 10px;
@@ -218,8 +219,20 @@ input.field-input {
     .upload-desktop { display: none; }
     .upload-mobile { display: flex !important; }
   }
-        `}</style>
-
+`
+export default function App() {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <link rel="preconnect" href="https://cdn.shopify.com/" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        />
+        <title>Zildjian Artist Profile</title>
+        <style dangerouslySetInnerHTML={{ __html: globalStyles }} />
         <Meta />
         <Links />
       </head>
