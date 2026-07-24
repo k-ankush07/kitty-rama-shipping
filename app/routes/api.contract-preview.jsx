@@ -6,7 +6,6 @@ export const loader = async ({ request }) => {
 
   const url = new URL(request.url);
   let contractId = url.searchParams.get("contractId");
-
   if (!contractId) {
     return new Response(
       JSON.stringify({ error: "Pass ?contractId=gid://shopify/SubscriptionContract/123 (or just the numeric id)" }),
@@ -25,14 +24,6 @@ export const loader = async ({ request }) => {
         headers: { "Content-Type": "application/json" },
       });
     }
-
-    // ── Cycle-specific state ──
-    // preview.lineItem comes from the contract's default lines, which do
-    // NOT reflect a cycle-level draft edit until Shopify actually bills
-    // that cycle. This just confirms the cycle's basic scheduling info —
-    // Shopify's API doesn't expose committed cycle-level line items via
-    // this read query, so use Shopify Admin UI (or the actual order once
-    // billed) to visually confirm the swapped product.
     let cycleCommittedState = null;
     if (preview.nextOrder?.cycleIndex != null) {
       try {
@@ -44,6 +35,8 @@ export const loader = async ({ request }) => {
               cycleIndex
               billingAttemptExpectedDate
               skipped
+              edited
+              status
             }
           }
         `, { variables: { contractId, index: preview.nextOrder.cycleIndex } });
@@ -58,16 +51,6 @@ export const loader = async ({ request }) => {
         cycleCommittedState = { error: String(err?.message || err) };
       }
     }
-
-    // ── Billing attempt history ──
-    // This is the piece that was missing before: without it, there's no way
-    // to tell from this endpoint whether a previously-triggered charge
-    // (subscriptionBillingCycleCharge) actually succeeded, is still stuck
-    // "pending", or silently failed — which is exactly what determines
-    // whether nextOrder.cycleIndex ever advances. `ready: true` + an order
-    // id means the charge completed and an order exists; `ready: false`
-    // with no order after a long time usually means it's stuck or the
-    // customer's payment needs attention.
     let billingAttempts = null;
     try {
       const attemptsRes = await admin.graphql(`
@@ -103,10 +86,6 @@ export const loader = async ({ request }) => {
       billingAttempts = { error: String(err?.message || err) };
     }
 
-    // ── Billing policy (does this subscription have an end date?) ──
-    // maxCycles tells you whether this contract auto-terminates after a
-    // fixed number of orders, or runs indefinitely until cancelled.
-    // null/0 maxCycles = unlimited (no built-in end date).
     let billingPolicy = null;
     try {
       const policyRes = await admin.graphql(`
