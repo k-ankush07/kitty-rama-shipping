@@ -2093,23 +2093,3 @@
 // export default App;
 
 
-// app/routes/app._index.tsx
-
-import { data, redirect } from "react-router";
-import { useLoaderData } from "react-router";
-import { authenticate } from "../shopify.server";
-
-export async function loader({ request }: { request: Request }) {
-  const { session, redirectUrl } = await authenticate.admin(request);
-
-  if (redirectUrl) return redirect(redirectUrl);
-  if (!session) throw new Response("Unauthorized", { status: 401 });
-
-  return data({ shop: session.shop });
-}
-
-export default function AppIndex() {
-  const { shop } = useLoaderData<typeof loader>();
-
-  return <div>Welcome, {shop}. This is app._index</div>;
-}
