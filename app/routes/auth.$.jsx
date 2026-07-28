@@ -1,13 +1,21 @@
-import { boundary } from "@shopify/shopify-app-react-router/server";
+// app/routes/auth.$.jsx
+
+import { redirect } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+export async function loader({ request }) {
+  const { session, redirectUrl } = await authenticate.admin(request);
 
-  return null;
-};
+  if (redirectUrl) {
+    return redirect(redirectUrl);
+  }
 
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
+  if (!session) {
+    throw new Response("Unauthorized", { status: 401 });
+  }
 
+  const url = new URL(request.url);
+  const host = url.searchParams.get("host") || "";
+
+  return redirect(`/app?host=${encodeURIComponent(host)}`);
+}
