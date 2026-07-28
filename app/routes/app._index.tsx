@@ -1676,418 +1676,418 @@
 // // }
 
 
-import React, { useState, useEffect, useRef } from 'react';
+// import React, { useState, useEffect, useRef } from 'react';
 
-const SECTIONS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
+// const SECTIONS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
 
-const NAV_ITEMS = [
-  { group: 'Artist Info', links: [{ id: 's1', num: '01', label: 'Artist Info' }, { id: 's2', num: '02', label: 'Your Quote' }] },
-  { group: 'Setup', links: [{ id: 's3', num: '03', label: 'Cymbal Setup' }, { id: 's4', num: '04', label: "Go-To's" }] },
-  { group: 'Online', links: [{ id: 's5', num: '05', label: 'Website & Socials' }] },
-  { group: 'Media', links: [{ id: 's6', num: '06', label: 'Profile Photo' }, { id: 's7', num: '07', label: 'Setup Photo' }, { id: 's8', num: '08', label: 'Videos' }] },
-];
+// const NAV_ITEMS = [
+//   { group: 'Artist Info', links: [{ id: 's1', num: '01', label: 'Artist Info' }, { id: 's2', num: '02', label: 'Your Quote' }] },
+//   { group: 'Setup', links: [{ id: 's3', num: '03', label: 'Cymbal Setup' }, { id: 's4', num: '04', label: "Go-To's" }] },
+//   { group: 'Online', links: [{ id: 's5', num: '05', label: 'Website & Socials' }] },
+//   { group: 'Media', links: [{ id: 's6', num: '06', label: 'Profile Photo' }, { id: 's7', num: '07', label: 'Setup Photo' }, { id: 's8', num: '08', label: 'Videos' }] },
+// ];
 
-const MOBILE_TABS = [
-  { id: 's1', num: '01', label: 'Info' },
-  { id: 's2', num: '02', label: 'Quote' },
-  { id: 's3', num: '03', label: 'Setup' },
-  { id: 's4', num: '04', label: "Go-To's" },
-  { id: 's5', num: '05', label: 'Social' },
-  { id: 's6', num: '06', label: 'Profile' },
-  { id: 's7', num: '07', label: 'Setup Photo' },
-  { id: 's8', num: '08', label: 'Videos' },
-];
+// const MOBILE_TABS = [
+//   { id: 's1', num: '01', label: 'Info' },
+//   { id: 's2', num: '02', label: 'Quote' },
+//   { id: 's3', num: '03', label: 'Setup' },
+//   { id: 's4', num: '04', label: "Go-To's" },
+//   { id: 's5', num: '05', label: 'Social' },
+//   { id: 's6', num: '06', label: 'Profile' },
+//   { id: 's7', num: '07', label: 'Setup Photo' },
+//   { id: 's8', num: '08', label: 'Videos' },
+// ];
 
-const CYMBALS = [
-  { name: 'K Constantinople Medium Thin Rides, Low', sub: '22" Ride' },
-  { name: 'K Custom Special Dry Hihat', sub: '14" Hi-Hat Pair' },
-  { name: 'A Custom Ride', sub: '20" Ride' },
-  { name: 'A Custom Crash', sub: '18" Crash' },
-];
+// const CYMBALS = [
+//   { name: 'K Constantinople Medium Thin Rides, Low', sub: '22" Ride' },
+//   { name: 'K Custom Special Dry Hihat', sub: '14" Hi-Hat Pair' },
+//   { name: 'A Custom Ride', sub: '20" Ride' },
+//   { name: 'A Custom Crash', sub: '18" Crash' },
+// ];
 
-function SectionHeading({ num, title }) {
-  return (
-    <>
-      <div className="section-heading">
-        <span className="section-num">{num}</span>
-        <span className="section-title">{title}</span>
-      </div>
-      <hr className="section-divider" />
-    </>
-  );
-}
+// function SectionHeading({ num, title }) {
+//   return (
+//     <>
+//       <div className="section-heading">
+//         <span className="section-num">{num}</span>
+//         <span className="section-title">{title}</span>
+//       </div>
+//       <hr className="section-divider" />
+//     </>
+//   );
+// }
 
-function FieldGroup({ label, hint, required, children, img }) {
-  return (
-    <div className="field-group">
-      <label className="field-label">
-        {img && <span className="field-icon" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 6 }}>{img}</span>}
-        {label} {required && <span className="req">★</span>}
-      </label>
-      {hint && <div className="field-hint">{hint}</div>}
-      {children}
-    </div>
-  );
-}
+// function FieldGroup({ label, hint, required, children, img }) {
+//   return (
+//     <div className="field-group">
+//       <label className="field-label">
+//         {img && <span className="field-icon" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 6 }}>{img}</span>}
+//         {label} {required && <span className="req">★</span>}
+//       </label>
+//       {hint && <div className="field-hint">{hint}</div>}
+//       {children}
+//     </div>
+//   );
+// }
 
-function CymbalList({ searchPlaceholder, filterLabel }) {
-  const [checked, setChecked] = useState([]);
-  const toggle = (i) => setChecked(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i]);
-  return (
-    <div className="field-group setup" style={{ overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', background: 'white', borderBottom: '1px solid #e5e0d8', padding: 10 }}>
-        <div style={{ width: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M6.41667 11.0833C8.994 11.0833 11.0833 8.994 11.0833 6.41667C11.0833 3.83934 8.994 1.75 6.41667 1.75C3.83934 1.75 1.75 3.83934 1.75 6.41667C1.75 8.994 3.83934 11.0833 6.41667 11.0833Z" stroke="black" strokeWidth="1.16667" />
-            <path d="M12.2499 12.25L9.7124 9.71252" stroke="black" strokeWidth="1.16667" />
-          </svg>
-        </div>
-        <input className="field-input" type="text" placeholder={searchPlaceholder} /></div>
-      <div className="list-box" style={{ background: '#faf9f7' }}>
-        {CYMBALS.map((c, i) => (<div key={i} className="list-item">
-          <input type="checkbox" checked={checked.includes(i)} onChange={() => toggle(i)} style={{ accentColor: '#B8860B', width: 16, height: 16, flexShrink: 0, border: '1px solid #767676' }} />
-          <div className="list-thumb">
-          </div><div><div style={{ fontSize: 13, fontWeight: 500, color: '#000000', marginBottom: '3px' }}>{c.name}</div>
-            <div style={{ fontSize: 12, color: '#666666' }}>{c.sub}</div></div></div>))}
-        <div className="list-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', fontSize: 12, color: '#555', borderTop: '1px solid #e5e0d8' }}>
-          <span>Filter: <strong>{filterLabel}</strong></span>
-          <span style={{ color: '#666666' }}>{checked.length} selected · <span style={{ color: '#666666', cursor: 'pointer' }} onClick={() => setChecked([])}>Clear all</span></span></div></div>
-    </div>
-  );
-}
+// function CymbalList({ searchPlaceholder, filterLabel }) {
+//   const [checked, setChecked] = useState([]);
+//   const toggle = (i) => setChecked(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i]);
+//   return (
+//     <div className="field-group setup" style={{ overflow: 'hidden' }}>
+//       <div style={{ display: 'flex', alignItems: 'center', background: 'white', borderBottom: '1px solid #e5e0d8', padding: 10 }}>
+//         <div style={{ width: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+//           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+//             <path d="M6.41667 11.0833C8.994 11.0833 11.0833 8.994 11.0833 6.41667C11.0833 3.83934 8.994 1.75 6.41667 1.75C3.83934 1.75 1.75 3.83934 1.75 6.41667C1.75 8.994 3.83934 11.0833 6.41667 11.0833Z" stroke="black" strokeWidth="1.16667" />
+//             <path d="M12.2499 12.25L9.7124 9.71252" stroke="black" strokeWidth="1.16667" />
+//           </svg>
+//         </div>
+//         <input className="field-input" type="text" placeholder={searchPlaceholder} /></div>
+//       <div className="list-box" style={{ background: '#faf9f7' }}>
+//         {CYMBALS.map((c, i) => (<div key={i} className="list-item">
+//           <input type="checkbox" checked={checked.includes(i)} onChange={() => toggle(i)} style={{ accentColor: '#B8860B', width: 16, height: 16, flexShrink: 0, border: '1px solid #767676' }} />
+//           <div className="list-thumb">
+//           </div><div><div style={{ fontSize: 13, fontWeight: 500, color: '#000000', marginBottom: '3px' }}>{c.name}</div>
+//             <div style={{ fontSize: 12, color: '#666666' }}>{c.sub}</div></div></div>))}
+//         <div className="list-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', fontSize: 12, color: '#555', borderTop: '1px solid #e5e0d8' }}>
+//           <span>Filter: <strong>{filterLabel}</strong></span>
+//           <span style={{ color: '#666666' }}>{checked.length} selected · <span style={{ color: '#666666', cursor: 'pointer' }} onClick={() => setChecked([])}>Clear all</span></span></div></div>
+//     </div>
+//   );
+// }
 
-function UploadBox({ mobileText, hint }) {
-  return (
-    <div className="upload-box">
-      <div className="upload-icon"><svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <g opacity="0.3">
-          <path d="M20 38C29.9411 38 38 29.9411 38 20C38 10.0589 29.9411 2 20 2C10.0589 2 2 10.0589 2 20C2 29.9411 10.0589 38 20 38Z" stroke="#999999" strokeWidth="1.5" />
-          <path d="M20 28V12M27 19L20 12L13 19" stroke="#999999" strokeWidth="1.5" />
-        </g>
-      </svg></div>
-      <div className="upload-desktop" style={{ fontSize: 14, color: '#1A1A1A', fontWeight: 700 }}>Drop your photo here or <span className="upload-link">browse files</span></div>
-      <div className="upload-mobile" style={{ display: 'none', fontSize: 13, fontWeight: 600, color: '#444' }}>{mobileText}</div>
-      <div style={{ fontSize: 12, color: '#000000' }}> <span style={{ color: '#666666' }}>JPG, PNG, TIFF · </span> Min. 1000px wide recommended</div>
-    </div>
-  );
-}
+// function UploadBox({ mobileText, hint }) {
+//   return (
+//     <div className="upload-box">
+//       <div className="upload-icon"><svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+//         <g opacity="0.3">
+//           <path d="M20 38C29.9411 38 38 29.9411 38 20C38 10.0589 29.9411 2 20 2C10.0589 2 2 10.0589 2 20C2 29.9411 10.0589 38 20 38Z" stroke="#999999" strokeWidth="1.5" />
+//           <path d="M20 28V12M27 19L20 12L13 19" stroke="#999999" strokeWidth="1.5" />
+//         </g>
+//       </svg></div>
+//       <div className="upload-desktop" style={{ fontSize: 14, color: '#1A1A1A', fontWeight: 700 }}>Drop your photo here or <span className="upload-link">browse files</span></div>
+//       <div className="upload-mobile" style={{ display: 'none', fontSize: 13, fontWeight: 600, color: '#444' }}>{mobileText}</div>
+//       <div style={{ fontSize: 12, color: '#000000' }}> <span style={{ color: '#666666' }}>JPG, PNG, TIFF · </span> Min. 1000px wide recommended</div>
+//     </div>
+//   );
+// }
 
-function App() {
-  const [active, setActive] = useState('s1');
-  const clickLockRef = useRef(false);
-  const tabBarRef = useRef(null);
+// function App() {
+//   const [active, setActive] = useState('s1');
+//   const clickLockRef = useRef(false);
+//   const tabBarRef = useRef(null);
 
-  // Fix: this app runs embedded inside a Shopify admin iframe. The first
-  // click on any link only shifts focus into the iframe (browser default
-  // behavior) instead of firing the click handler, so nav links needed a
-  // double click. Forcing focus onto the iframe as soon as it mounts means
-  // the iframe is already focused by the time the user clicks, so a single
-  // click works as expected.
-  useEffect(() => {
-    window.focus();
-  }, []);
+//   // Fix: this app runs embedded inside a Shopify admin iframe. The first
+//   // click on any link only shifts focus into the iframe (browser default
+//   // behavior) instead of firing the click handler, so nav links needed a
+//   // double click. Forcing focus onto the iframe as soon as it mounts means
+//   // the iframe is already focused by the time the user clicks, so a single
+//   // click works as expected.
+//   useEffect(() => {
+//     window.focus();
+//   }, []);
 
-  const applyActive = (id) => {
-    setActive(id);
-    if (tabBarRef.current) {
-      const tab = tabBarRef.current.querySelector(`[href="#${id}"]`);
-      if (tab) {
-        const barWidth = tabBarRef.current.offsetWidth;
-        tabBarRef.current.scrollTo({ left: tab.offsetLeft - barWidth / 2 + tab.offsetWidth / 2, behavior: 'smooth' });
-      }
-    }
-  };
+//   const applyActive = (id) => {
+//     setActive(id);
+//     if (tabBarRef.current) {
+//       const tab = tabBarRef.current.querySelector(`[href="#${id}"]`);
+//       if (tab) {
+//         const barWidth = tabBarRef.current.offsetWidth;
+//         tabBarRef.current.scrollTo({ left: tab.offsetLeft - barWidth / 2 + tab.offsetWidth / 2, behavior: 'smooth' });
+//       }
+//     }
+//   };
 
-  useEffect(() => {
-    const onScroll = () => {
-      if (clickLockRef.current) return;
-      if (window.scrollY < 10) { applyActive('s1'); return; }
-      const scrollBottom = window.scrollY + window.innerHeight;
-      if (document.documentElement.scrollHeight - scrollBottom < 10) { applyActive(SECTIONS[SECTIONS.length - 1]); return; }
-      const offset = window.innerHeight * 0.45;
-      let current = SECTIONS[0];
-      SECTIONS.forEach(id => {
-        const el = document.getElementById(id);
-        if (el && el.getBoundingClientRect().top <= offset) current = id;
-      });
-      applyActive(current);
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    onScroll();
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
+//   useEffect(() => {
+//     const onScroll = () => {
+//       if (clickLockRef.current) return;
+//       if (window.scrollY < 10) { applyActive('s1'); return; }
+//       const scrollBottom = window.scrollY + window.innerHeight;
+//       if (document.documentElement.scrollHeight - scrollBottom < 10) { applyActive(SECTIONS[SECTIONS.length - 1]); return; }
+//       const offset = window.innerHeight * 0.45;
+//       let current = SECTIONS[0];
+//       SECTIONS.forEach(id => {
+//         const el = document.getElementById(id);
+//         if (el && el.getBoundingClientRect().top <= offset) current = id;
+//       });
+//       applyActive(current);
+//     };
+//     window.addEventListener('scroll', onScroll, { passive: true });
+//     onScroll();
+//     return () => window.removeEventListener('scroll', onScroll);
+//   }, []);
 
-  // Mousedown just makes sure the iframe is focused before the click fires
-  // (fixes the "first click only focuses" issue). The actual navigation
-  // happens on click, where preventDefault correctly stops the browser's
-  // default hash-jump.
-  const handleNavMouseDown = () => {
-    window.focus();
-  };
+//   // Mousedown just makes sure the iframe is focused before the click fires
+//   // (fixes the "first click only focuses" issue). The actual navigation
+//   // happens on click, where preventDefault correctly stops the browser's
+//   // default hash-jump.
+//   const handleNavMouseDown = () => {
+//     window.focus();
+//   };
 
-  const handleNavClick = (e, id) => {
-    // Prevent the browser's default instant hash-jump — it fights with our
-    // own smooth-scroll below and causes the visible "blink"/needing
-    // multiple clicks.
-    if (e) e.preventDefault();
+//   const handleNavClick = (e, id) => {
+//     // Prevent the browser's default instant hash-jump — it fights with our
+//     // own smooth-scroll below and causes the visible "blink"/needing
+//     // multiple clicks.
+//     if (e) e.preventDefault();
 
-    applyActive(id);
-    clickLockRef.current = true;
+//     applyActive(id);
+//     clickLockRef.current = true;
 
-    const el = document.getElementById(id);
-    if (el) {
-      // Compute the exact scroll position so the section's top lands right
-      // at the top of the viewport, minus the height of the fixed mobile
-      // header (if it's visible) so the header doesn't cover the section.
-      const headerEl = document.querySelector('.mobile-tabs');
-      const headerHeight =
-        headerEl && window.getComputedStyle(headerEl).display !== 'none'
-          ? headerEl.offsetHeight
-          : 0;
+//     const el = document.getElementById(id);
+//     if (el) {
+//       // Compute the exact scroll position so the section's top lands right
+//       // at the top of the viewport, minus the height of the fixed mobile
+//       // header (if it's visible) so the header doesn't cover the section.
+//       const headerEl = document.querySelector('.mobile-tabs');
+//       const headerHeight =
+//         headerEl && window.getComputedStyle(headerEl).display !== 'none'
+//           ? headerEl.offsetHeight
+//           : 0;
 
-      const targetTop =
-        el.getBoundingClientRect().top + window.scrollY - headerHeight;
+//       const targetTop =
+//         el.getBoundingClientRect().top + window.scrollY - headerHeight;
 
-      window.scrollTo({ top: targetTop, behavior: 'smooth' });
-    }
+//       window.scrollTo({ top: targetTop, behavior: 'smooth' });
+//     }
 
-    if (window.history && window.history.replaceState) {
-      window.history.replaceState(null, '', `#${id}`);
-    }
+//     if (window.history && window.history.replaceState) {
+//       window.history.replaceState(null, '', `#${id}`);
+//     }
 
-    setTimeout(() => { clickLockRef.current = false; }, 800);
-  };
+//     setTimeout(() => { clickLockRef.current = false; }, 800);
+//   };
 
-  return (
-    <>
-      {/* Mobile tabs */}
-      <nav className="mobile-tabs" ref={tabBarRef}>
-        {MOBILE_TABS.map(t => (
-          <a key={t.id} href={`#${t.id}`} className={`mobile-tab${active === t.id ? ' active' : ''}`} onMouseDown={handleNavMouseDown} onClick={(e) => handleNavClick(e, t.id)}>
-            <span className="tab-num">{t.num}</span>
-            <span className="tab-label">{t.label}</span>
-          </a>
-        ))}
-      </nav>
+//   return (
+//     <>
+//       {/* Mobile tabs */}
+//       <nav className="mobile-tabs" ref={tabBarRef}>
+//         {MOBILE_TABS.map(t => (
+//           <a key={t.id} href={`#${t.id}`} className={`mobile-tab${active === t.id ? ' active' : ''}`} onMouseDown={handleNavMouseDown} onClick={(e) => handleNavClick(e, t.id)}>
+//             <span className="tab-num">{t.num}</span>
+//             <span className="tab-label">{t.label}</span>
+//           </a>
+//         ))}
+//       </nav>
 
-      <div className="layout">
-        {/* Sidebar */}
-        <aside className="sidebar">
-          {NAV_ITEMS.map(group => (
-            <React.Fragment key={group.group}>
-              <div className="sidebar-group-label">{group.group}</div>
-              {group.links.map(link => (
-                <a key={link.id} href={`#${link.id}`} className={`sidebar-link${active === link.id ? ' active' : ''}`} onMouseDown={handleNavMouseDown} onClick={(e) => handleNavClick(e, link.id)}>
-                  <span><span className="sidebar-link-num">{link.num}</span> {link.label}</span>
-                  {/* <span className="plus">+</span> */}
-                </a>
-              ))}
-            </React.Fragment>
-          ))}
-        </aside>
+//       <div className="layout">
+//         {/* Sidebar */}
+//         <aside className="sidebar">
+//           {NAV_ITEMS.map(group => (
+//             <React.Fragment key={group.group}>
+//               <div className="sidebar-group-label">{group.group}</div>
+//               {group.links.map(link => (
+//                 <a key={link.id} href={`#${link.id}`} className={`sidebar-link${active === link.id ? ' active' : ''}`} onMouseDown={handleNavMouseDown} onClick={(e) => handleNavClick(e, link.id)}>
+//                   <span><span className="sidebar-link-num">{link.num}</span> {link.label}</span>
+//                   {/* <span className="plus">+</span> */}
+//                 </a>
+//               ))}
+//             </React.Fragment>
+//           ))}
+//         </aside>
 
-        <main className="main">
+//         <main className="main">
 
-          {/* 01 */}
-          <section id="s1" style={{ marginBottom: 40 }}>
-            <SectionHeading num="01" title="Artist Information" />
-            <div className="field-row">
-              <FieldGroup label="Name" hint="Artist name you prefer on site." required>
-                <input className="field-input" type="text" placeholder="e.g. Mimmo Di Cicco" />
-              </FieldGroup>
-              <FieldGroup label="Artist Band / Affiliation" hint='Who are you currently playing with?' required>
-                <input className="field-input" type="text" placeholder="e.g. Independent" />
-              </FieldGroup>
-            </div>
-            <div className="field-row">
-              <FieldGroup label="Artist Type" required>
-                <select className="field-input" style={{ color: '#5C5D60' }}>
-                  <option value="">Select an option...</option>
-                  <option>Professional</option>
-                  <option>Semi-Professional</option>
-                  <option>Hobbyist</option>
-                </select>
-              </FieldGroup>
-              <FieldGroup label="Are you an Educator or Performer?" required>
-                <select className="field-input" style={{ color: '#5C5D60' }}>
-                  <option value="">Select an option...</option>
-                  <option>Educator</option>
-                  <option>Performer</option>
-                  <option>Both</option>
-                </select>
-              </FieldGroup>
-            </div>
-            <FieldGroup label="Country" required>
-              <select className="field-input" style={{ color: '#5C5D60' }}>
-                <option value="">Select your country...</option>
-                <option>United States</option>
-                <option>United Kingdom</option>
-                <option>Canada</option>
-                <option>Australia</option>
-                <option>Germany</option>
-                <option>France</option>
-                <option>Japan</option>
-              </select>
-            </FieldGroup>
-          </section>
+//           {/* 01 */}
+//           <section id="s1" style={{ marginBottom: 40 }}>
+//             <SectionHeading num="01" title="Artist Information" />
+//             <div className="field-row">
+//               <FieldGroup label="Name" hint="Artist name you prefer on site." required>
+//                 <input className="field-input" type="text" placeholder="e.g. Mimmo Di Cicco" />
+//               </FieldGroup>
+//               <FieldGroup label="Artist Band / Affiliation" hint='Who are you currently playing with?' required>
+//                 <input className="field-input" type="text" placeholder="e.g. Independent" />
+//               </FieldGroup>
+//             </div>
+//             <div className="field-row">
+//               <FieldGroup label="Artist Type" required>
+//                 <select className="field-input" style={{ color: '#5C5D60' }}>
+//                   <option value="">Select an option...</option>
+//                   <option>Professional</option>
+//                   <option>Semi-Professional</option>
+//                   <option>Hobbyist</option>
+//                 </select>
+//               </FieldGroup>
+//               <FieldGroup label="Are you an Educator or Performer?" required>
+//                 <select className="field-input" style={{ color: '#5C5D60' }}>
+//                   <option value="">Select an option...</option>
+//                   <option>Educator</option>
+//                   <option>Performer</option>
+//                   <option>Both</option>
+//                 </select>
+//               </FieldGroup>
+//             </div>
+//             <FieldGroup label="Country" required>
+//               <select className="field-input" style={{ color: '#5C5D60' }}>
+//                 <option value="">Select your country...</option>
+//                 <option>United States</option>
+//                 <option>United Kingdom</option>
+//                 <option>Canada</option>
+//                 <option>Australia</option>
+//                 <option>Germany</option>
+//                 <option>France</option>
+//                 <option>Japan</option>
+//               </select>
+//             </FieldGroup>
+//           </section>
 
-          {/* 02 */}
-          <section id="s2" style={{ marginBottom: 40, paddingTop: 40, position: 'relative' }}>
-            <SectionHeading num="02" title="Your Zildjian Quote" />
-            <FieldGroup label="Why do you choose Zildjian?" hint="This is the quote that will appear on your artist page. Please read it carefully." required>
-              <textarea className="field-input" placeholder="Share what Zildjian means to you, in your own words..." rows="6" style={{ resize: 'vertical', lineHeight: 1.5 }}></textarea>
-              <div className='count-show'>0 / 400</div>
-            </FieldGroup>
-          </section>
+//           {/* 02 */}
+//           <section id="s2" style={{ marginBottom: 40, paddingTop: 40, position: 'relative' }}>
+//             <SectionHeading num="02" title="Your Zildjian Quote" />
+//             <FieldGroup label="Why do you choose Zildjian?" hint="This is the quote that will appear on your artist page. Please read it carefully." required>
+//               <textarea className="field-input" placeholder="Share what Zildjian means to you, in your own words..." rows="6" style={{ resize: 'vertical', lineHeight: 1.5 }}></textarea>
+//               <div className='count-show'>0 / 400</div>
+//             </FieldGroup>
+//           </section>
 
-          {/* 03 */}
-          <section id="s3" style={{ marginBottom: 40 }} className='cymbal-setup'>
-            <SectionHeading num="03" title="Cymbal Setup" />
-            <FieldGroup label="What's in Your Setup?" hint="Select the cymbals in your setup here left to right." required>
-              <CymbalList searchPlaceholder="Search cymbals by name or sku..." filterLabel="Cymbals only" />
-            </FieldGroup>
-          </section>
+//           {/* 03 */}
+//           <section id="s3" style={{ marginBottom: 40 }} className='cymbal-setup'>
+//             <SectionHeading num="03" title="Cymbal Setup" />
+//             <FieldGroup label="What's in Your Setup?" hint="Select the cymbals in your setup here left to right." required>
+//               <CymbalList searchPlaceholder="Search cymbals by name or sku..." filterLabel="Cymbals only" />
+//             </FieldGroup>
+//           </section>
 
-          {/* 04 */}
-          <section id="s4" style={{ marginBottom: 40 }}>
-            <SectionHeading num="04" title="Go-To's" />
-            <FieldGroup label="What are your Go-To's?" hint="Got those Zildjian products you just don't know name without? Whether that's a must-have cymbal, sticks, apparel, bags etc.">
-              <CymbalList searchPlaceholder="Search all Zildjian products..." filterLabel="Full catalog – all product types" />
-            </FieldGroup>
-          </section>
+//           {/* 04 */}
+//           <section id="s4" style={{ marginBottom: 40 }}>
+//             <SectionHeading num="04" title="Go-To's" />
+//             <FieldGroup label="What are your Go-To's?" hint="Got those Zildjian products you just don't know name without? Whether that's a must-have cymbal, sticks, apparel, bags etc.">
+//               <CymbalList searchPlaceholder="Search all Zildjian products..." filterLabel="Full catalog – all product types" />
+//             </FieldGroup>
+//           </section>
 
-          {/* 05 */}
-          <section id="s5" style={{ marginBottom: 40 }}>
-            <SectionHeading num="05" title="Website & Socials" />
-            <FieldGroup label="Website URL" hint="Feel free to include a personal or band web address.">
-              <input className="field-input" type="url" placeholder="https://yourwebsite.com" />
-            </FieldGroup>
-            <div className="field-row" style={{ marginTop: 26 }}>
-              <FieldGroup
-                img={
-                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M10.625 1.25H4.375C2.64911 1.25 1.25 2.64911 1.25 4.375V10.625C1.25 12.3509 2.64911 13.75 4.375 13.75H10.625C12.3509 13.75 13.75 12.3509 13.75 10.625V4.375C13.75 2.64911 12.3509 1.25 10.625 1.25Z" stroke="#C13584" strokeWidth="1.25" />
-                    <path d="M10.0001 7.10619C10.0772 7.62635 9.98835 8.15758 9.74616 8.62433C9.50397 9.09108 9.12078 9.46958 8.65108 9.70599C8.18138 9.9424 7.64909 10.0247 7.12993 9.94115C6.61076 9.85761 6.13116 9.6125 5.75934 9.24067C5.38751 8.86884 5.14239 8.38924 5.05885 7.87008C4.97531 7.35091 5.0576 6.81863 5.29402 6.34893C5.53043 5.87923 5.90893 5.49603 6.37568 5.25385C6.84243 5.01166 7.37366 4.92281 7.89381 4.99994C8.42439 5.07862 8.91559 5.32586 9.29487 5.70514C9.67415 6.08441 9.92138 6.57562 10.0001 7.10619Z" stroke="#C13584" strokeWidth="1.25" />
-                    <path d="M10.9375 4.0625H10.9438" stroke="#C13584" strokeWidth="1.25" />
-                  </svg>
-                }
-                label="Instagram"
-                hint="Please include the profile URL."
-              >
-                <input className="field-input" type="url" placeholder="https://instagram.com/yourhandle" />
-              </FieldGroup>
-              <FieldGroup
-                img={
-                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M14.0874 4.0125C14.0088 3.71974 13.8549 3.45265 13.6411 3.23775C13.4273 3.02285 13.161 2.86763 12.8687 2.7875C11.7999 2.5 7.49993 2.5 7.49993 2.5C7.49993 2.5 3.19993 2.5 2.13118 2.7875C1.83883 2.86763 1.57253 3.02285 1.35873 3.23775C1.14492 3.45265 0.991067 3.71974 0.912435 4.0125C0.704343 5.16301 0.608061 6.33095 0.624935 7.5C0.608061 8.66905 0.704343 9.83699 0.912435 10.9875C0.985264 11.2872 1.13654 11.562 1.35072 11.7839C1.5649 12.0058 1.83428 12.1667 2.13118 12.25C3.19993 12.5 7.49993 12.5 7.49993 12.5C7.49993 12.5 11.7999 12.5 12.8687 12.2125C13.1603 12.1329 13.4261 11.9786 13.6398 11.7649C13.8536 11.5512 14.0079 11.2854 14.0874 10.9937C14.2959 9.84119 14.3922 8.67114 14.3749 7.5C14.3918 6.33095 14.2955 5.16301 14.0874 4.0125Z" fill="#FF0000" />
-                    <path d="M6.09375 9.38755L9.6875 7.50005L6.09375 5.61255V9.38755Z" fill="white" />
-                  </svg>
-                }
-                label="YouTube Channel" hint="Please include the profile URL.">
-                <input className="field-input" type="url" placeholder="https://youtube.com/@channel" />
-              </FieldGroup>
-            </div>
-            <div className="field-row">
-              <FieldGroup
-                img={
-                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M11.25 1.25H9.375C8.5462 1.25 7.75134 1.57924 7.16529 2.16529C6.57924 2.75134 6.25 3.5462 6.25 4.375V6.25H4.375V8.75H6.25V13.75H8.75V8.75H10.625L11.25 6.25H8.75V4.375C8.75 4.20924 8.81585 4.05027 8.93306 3.93306C9.05027 3.81585 9.20924 3.75 9.375 3.75H11.25V1.25Z" fill="#1877F2" />
-                  </svg>
-                }
-                label="Facebook" hint="Please include the entire url.">
-                <input className="field-input" type="url" placeholder="https://facebook.com/yourpage" />
-              </FieldGroup>
-              <FieldGroup
-                img={
-                  <svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9.91083 0H11.8405L7.62475 4.81833L12.5842 11.375H8.701L5.6595 7.39842L2.17933 11.375H0.2485L4.75767 6.22125L0 0H3.98183L6.73108 3.63475L9.91083 0ZM9.23358 10.22H10.3028L3.40083 1.09433H2.25342L9.23358 10.22Z" fill="#1A1A1A" />
-                  </svg>
-                }
-                label="Twitter / X" hint="Please include the entire URL.">
-                <input className="field-input" type="url" placeholder="https://x.com/yourhandle" />
-              </FieldGroup>
-            </div>
-            <div className="field-group social-half" style={{ maxWidth: '50%', paddingRight: 8 }}>
-              <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M11.4274 3.90258C10.8459 3.77471 10.3199 3.46592 9.92478 3.02052C9.52968 2.57512 9.28584 2.01601 9.22824 1.42341V1.16675H7.21573V9.14091C7.1605 9.54653 6.95957 9.91819 6.65043 10.1865C6.3413 10.4549 5.94509 10.6016 5.53574 10.5992C5.08862 10.5992 4.65983 10.4216 4.34367 10.1055C4.02752 9.78932 3.8499 9.36053 3.8499 8.91341C3.8499 8.4663 4.02752 8.03751 4.34367 7.72135C4.65983 7.4052 5.08862 7.22758 5.53574 7.22758C5.69907 7.22758 5.85074 7.25091 5.99657 7.28591V5.25591C5.84372 5.23659 5.6898 5.22685 5.53574 5.22675C4.55488 5.22675 3.61419 5.61639 2.92062 6.30996C2.22705 7.00354 1.8374 7.94422 1.8374 8.92508C1.8374 9.41075 1.93306 9.89167 2.11892 10.3404C2.30478 10.7891 2.5772 11.1968 2.92062 11.5402C3.61419 12.2338 4.55488 12.6234 5.53574 12.6234C6.51558 12.6219 7.45477 12.2315 8.14708 11.5381C8.83939 10.8447 9.22824 9.90493 9.22824 8.92508V5.06925C10.0428 5.65274 11.0204 5.965 12.0224 5.96175V3.93758C11.8234 3.9469 11.624 3.93517 11.4274 3.90258Z" fill="#1A1A1A" />
-                </svg>
-                TikTok
-              </label>
-              <div className="field-hint">Please include the profile URL.</div>
-              <input className="field-input" type="url" placeholder="https://tiktok.com/@yourhandle" />
-            </div>
-          </section>
+//           {/* 05 */}
+//           <section id="s5" style={{ marginBottom: 40 }}>
+//             <SectionHeading num="05" title="Website & Socials" />
+//             <FieldGroup label="Website URL" hint="Feel free to include a personal or band web address.">
+//               <input className="field-input" type="url" placeholder="https://yourwebsite.com" />
+//             </FieldGroup>
+//             <div className="field-row" style={{ marginTop: 26 }}>
+//               <FieldGroup
+//                 img={
+//                   <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                     <path d="M10.625 1.25H4.375C2.64911 1.25 1.25 2.64911 1.25 4.375V10.625C1.25 12.3509 2.64911 13.75 4.375 13.75H10.625C12.3509 13.75 13.75 12.3509 13.75 10.625V4.375C13.75 2.64911 12.3509 1.25 10.625 1.25Z" stroke="#C13584" strokeWidth="1.25" />
+//                     <path d="M10.0001 7.10619C10.0772 7.62635 9.98835 8.15758 9.74616 8.62433C9.50397 9.09108 9.12078 9.46958 8.65108 9.70599C8.18138 9.9424 7.64909 10.0247 7.12993 9.94115C6.61076 9.85761 6.13116 9.6125 5.75934 9.24067C5.38751 8.86884 5.14239 8.38924 5.05885 7.87008C4.97531 7.35091 5.0576 6.81863 5.29402 6.34893C5.53043 5.87923 5.90893 5.49603 6.37568 5.25385C6.84243 5.01166 7.37366 4.92281 7.89381 4.99994C8.42439 5.07862 8.91559 5.32586 9.29487 5.70514C9.67415 6.08441 9.92138 6.57562 10.0001 7.10619Z" stroke="#C13584" strokeWidth="1.25" />
+//                     <path d="M10.9375 4.0625H10.9438" stroke="#C13584" strokeWidth="1.25" />
+//                   </svg>
+//                 }
+//                 label="Instagram"
+//                 hint="Please include the profile URL."
+//               >
+//                 <input className="field-input" type="url" placeholder="https://instagram.com/yourhandle" />
+//               </FieldGroup>
+//               <FieldGroup
+//                 img={
+//                   <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                     <path d="M14.0874 4.0125C14.0088 3.71974 13.8549 3.45265 13.6411 3.23775C13.4273 3.02285 13.161 2.86763 12.8687 2.7875C11.7999 2.5 7.49993 2.5 7.49993 2.5C7.49993 2.5 3.19993 2.5 2.13118 2.7875C1.83883 2.86763 1.57253 3.02285 1.35873 3.23775C1.14492 3.45265 0.991067 3.71974 0.912435 4.0125C0.704343 5.16301 0.608061 6.33095 0.624935 7.5C0.608061 8.66905 0.704343 9.83699 0.912435 10.9875C0.985264 11.2872 1.13654 11.562 1.35072 11.7839C1.5649 12.0058 1.83428 12.1667 2.13118 12.25C3.19993 12.5 7.49993 12.5 7.49993 12.5C7.49993 12.5 11.7999 12.5 12.8687 12.2125C13.1603 12.1329 13.4261 11.9786 13.6398 11.7649C13.8536 11.5512 14.0079 11.2854 14.0874 10.9937C14.2959 9.84119 14.3922 8.67114 14.3749 7.5C14.3918 6.33095 14.2955 5.16301 14.0874 4.0125Z" fill="#FF0000" />
+//                     <path d="M6.09375 9.38755L9.6875 7.50005L6.09375 5.61255V9.38755Z" fill="white" />
+//                   </svg>
+//                 }
+//                 label="YouTube Channel" hint="Please include the profile URL.">
+//                 <input className="field-input" type="url" placeholder="https://youtube.com/@channel" />
+//               </FieldGroup>
+//             </div>
+//             <div className="field-row">
+//               <FieldGroup
+//                 img={
+//                   <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                     <path d="M11.25 1.25H9.375C8.5462 1.25 7.75134 1.57924 7.16529 2.16529C6.57924 2.75134 6.25 3.5462 6.25 4.375V6.25H4.375V8.75H6.25V13.75H8.75V8.75H10.625L11.25 6.25H8.75V4.375C8.75 4.20924 8.81585 4.05027 8.93306 3.93306C9.05027 3.81585 9.20924 3.75 9.375 3.75H11.25V1.25Z" fill="#1877F2" />
+//                   </svg>
+//                 }
+//                 label="Facebook" hint="Please include the entire url.">
+//                 <input className="field-input" type="url" placeholder="https://facebook.com/yourpage" />
+//               </FieldGroup>
+//               <FieldGroup
+//                 img={
+//                   <svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                     <path d="M9.91083 0H11.8405L7.62475 4.81833L12.5842 11.375H8.701L5.6595 7.39842L2.17933 11.375H0.2485L4.75767 6.22125L0 0H3.98183L6.73108 3.63475L9.91083 0ZM9.23358 10.22H10.3028L3.40083 1.09433H2.25342L9.23358 10.22Z" fill="#1A1A1A" />
+//                   </svg>
+//                 }
+//                 label="Twitter / X" hint="Please include the entire URL.">
+//                 <input className="field-input" type="url" placeholder="https://x.com/yourhandle" />
+//               </FieldGroup>
+//             </div>
+//             <div className="field-group social-half" style={{ maxWidth: '50%', paddingRight: 8 }}>
+//               <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+//                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                   <path d="M11.4274 3.90258C10.8459 3.77471 10.3199 3.46592 9.92478 3.02052C9.52968 2.57512 9.28584 2.01601 9.22824 1.42341V1.16675H7.21573V9.14091C7.1605 9.54653 6.95957 9.91819 6.65043 10.1865C6.3413 10.4549 5.94509 10.6016 5.53574 10.5992C5.08862 10.5992 4.65983 10.4216 4.34367 10.1055C4.02752 9.78932 3.8499 9.36053 3.8499 8.91341C3.8499 8.4663 4.02752 8.03751 4.34367 7.72135C4.65983 7.4052 5.08862 7.22758 5.53574 7.22758C5.69907 7.22758 5.85074 7.25091 5.99657 7.28591V5.25591C5.84372 5.23659 5.6898 5.22685 5.53574 5.22675C4.55488 5.22675 3.61419 5.61639 2.92062 6.30996C2.22705 7.00354 1.8374 7.94422 1.8374 8.92508C1.8374 9.41075 1.93306 9.89167 2.11892 10.3404C2.30478 10.7891 2.5772 11.1968 2.92062 11.5402C3.61419 12.2338 4.55488 12.6234 5.53574 12.6234C6.51558 12.6219 7.45477 12.2315 8.14708 11.5381C8.83939 10.8447 9.22824 9.90493 9.22824 8.92508V5.06925C10.0428 5.65274 11.0204 5.965 12.0224 5.96175V3.93758C11.8234 3.9469 11.624 3.93517 11.4274 3.90258Z" fill="#1A1A1A" />
+//                 </svg>
+//                 TikTok
+//               </label>
+//               <div className="field-hint">Please include the profile URL.</div>
+//               <input className="field-input" type="url" placeholder="https://tiktok.com/@yourhandle" />
+//             </div>
+//           </section>
 
-          {/* 06 */}
-          <section id="s6" style={{ marginBottom: 40 }}>
-            <SectionHeading num="06" title="Profile Photo" />
-            <FieldGroup label="Profile Picture" hint="This is the photo visitors will see first when viewing your artist page. Please attach the highest resolution file you can." required>
-              <UploadBox mobileText="Tap to upload photo" />
-            </FieldGroup>
-            <div style={{ marginTop: 20 }}>
-              <FieldGroup label="Profile Picture Credit" hint="Please add the appropriate photo credit here for Vanya." required>
-                <input className="field-input" type="text" placeholder="e.g. Photo by John Smith" />
-              </FieldGroup>
-            </div>
-            <div style={{ marginTop: 20 }}>
-              <FieldGroup label="Profile Picture Rights" hint="Do we have the rights to use / edit this image?" required>
-                <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}><input type="radio" name="profileRights" style={{ accentColor: '#B8860B' }} /> Yes, for both the website and marketing.</label>
-                <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><input type="radio" name="profileRights" style={{ accentColor: '#B8860B' }} /> Yes, but for the website only.</label>
-              </FieldGroup>
-            </div>
-          </section>
+//           {/* 06 */}
+//           <section id="s6" style={{ marginBottom: 40 }}>
+//             <SectionHeading num="06" title="Profile Photo" />
+//             <FieldGroup label="Profile Picture" hint="This is the photo visitors will see first when viewing your artist page. Please attach the highest resolution file you can." required>
+//               <UploadBox mobileText="Tap to upload photo" />
+//             </FieldGroup>
+//             <div style={{ marginTop: 20 }}>
+//               <FieldGroup label="Profile Picture Credit" hint="Please add the appropriate photo credit here for Vanya." required>
+//                 <input className="field-input" type="text" placeholder="e.g. Photo by John Smith" />
+//               </FieldGroup>
+//             </div>
+//             <div style={{ marginTop: 20 }}>
+//               <FieldGroup label="Profile Picture Rights" hint="Do we have the rights to use / edit this image?" required>
+//                 <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}><input type="radio" name="profileRights" style={{ accentColor: '#B8860B' }} /> Yes, for both the website and marketing.</label>
+//                 <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><input type="radio" name="profileRights" style={{ accentColor: '#B8860B' }} /> Yes, but for the website only.</label>
+//               </FieldGroup>
+//             </div>
+//           </section>
 
-          {/* 07 */}
-          <section id="s7" style={{ marginBottom: 40 }}>
-            <SectionHeading num="07" title="Setup Photo" />
-            <FieldGroup label="Setup Picture" hint={<>Show us your kit and setup! This photo will appear next to your cymbal list. Ideally an over-the-top or  behind-the-kit shot. <strong>Horizontal image preferred.</strong> Please attach the highest resolution file(s) you can.</>} required>
-              <div style={{ marginTop: 12 }}>
-                <UploadBox mobileText="Tap to upload setup photo" hint="Horizontal image preferred" />
-              </div>
-            </FieldGroup>
-            <div style={{ marginTop: 20 }}>
-              <FieldGroup label="Setup Picture Credit" hint="Please add the appropriate photo credit here for Vanya." required>
-                <input className="field-input" type="text" placeholder="e.g. Photo by Jane Doe" />
-              </FieldGroup>
-            </div>
-            <FieldGroup label="Setup Picture Rights" hint="Do we have the rights to use / edit this image?" required>
-              <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', marginBottom: 10, cursor: 'pointer' }}><input type="radio" name="setupRights" style={{ accentColor: '#B8860B' }} /> Yes, for both the website and marketing.</label>
-              <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', cursor: 'pointer' }}><input type="radio" name="setupRights" style={{ accentColor: '#B8860B' }} /> Yes, but for the website only.</label>
-            </FieldGroup>
-          </section>
+//           {/* 07 */}
+//           <section id="s7" style={{ marginBottom: 40 }}>
+//             <SectionHeading num="07" title="Setup Photo" />
+//             <FieldGroup label="Setup Picture" hint={<>Show us your kit and setup! This photo will appear next to your cymbal list. Ideally an over-the-top or  behind-the-kit shot. <strong>Horizontal image preferred.</strong> Please attach the highest resolution file(s) you can.</>} required>
+//               <div style={{ marginTop: 12 }}>
+//                 <UploadBox mobileText="Tap to upload setup photo" hint="Horizontal image preferred" />
+//               </div>
+//             </FieldGroup>
+//             <div style={{ marginTop: 20 }}>
+//               <FieldGroup label="Setup Picture Credit" hint="Please add the appropriate photo credit here for Vanya." required>
+//                 <input className="field-input" type="text" placeholder="e.g. Photo by Jane Doe" />
+//               </FieldGroup>
+//             </div>
+//             <FieldGroup label="Setup Picture Rights" hint="Do we have the rights to use / edit this image?" required>
+//               <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', marginBottom: 10, cursor: 'pointer' }}><input type="radio" name="setupRights" style={{ accentColor: '#B8860B' }} /> Yes, for both the website and marketing.</label>
+//               <label className='picture-radio' style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', cursor: 'pointer' }}><input type="radio" name="setupRights" style={{ accentColor: '#B8860B' }} /> Yes, but for the website only.</label>
+//             </FieldGroup>
+//           </section>
 
-          {/* 08 */}
-          <section id="s8" style={{ marginBottom: 48 }}>
-            <SectionHeading num="08" title="Videos" />
-            <FieldGroup label="Video 1" hint="Links to video you would like featured on your artist page. Please list the full URL.">
-              <div style={{ position: 'relative' }}>
-                <input className="field-input" type="url" placeholder="https://youtu.be/... or https://vimeo.com/..." style={{ paddingRight: 36 }} />
-                <svg style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', }} width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M15.3334 4.6665L10.6667 7.99984L15.3334 11.3332V4.6665Z" stroke="black" />
-                  <path d="M9.33342 3.3335H2.00008C1.2637 3.3335 0.666748 3.93045 0.666748 4.66683V11.3335C0.666748 12.0699 1.2637 12.6668 2.00008 12.6668H9.33342C10.0698 12.6668 10.6667 12.0699 10.6667 11.3335V4.66683C10.6667 3.93045 10.0698 3.3335 9.33342 3.3335Z" stroke="black" />
-                </svg>              </div>
-            </FieldGroup>
-            <div style={{ marginBottom: 35, borderBottom: '1px solid #E8E6E0' }}>
-              <FieldGroup label="Video 2" hint="Additional video you would like to feature. Please list the full URL.">
-                <div style={{ position: 'relative', marginBottom: 32 }}>
-                  <input className="field-input" type="url" placeholder="https://youtube.com/... or https://vimeo.com/..." style={{ paddingRight: 36 }} />
-                  <svg style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', }} width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M15.3334 4.6665L10.6667 7.99984L15.3334 11.3332V4.6665Z" stroke="black" />
-                    <path d="M9.33342 3.3335H2.00008C1.2637 3.3335 0.666748 3.93045 0.666748 4.66683V11.3335C0.666748 12.0699 1.2637 12.6668 2.00008 12.6668H9.33342C10.0698 12.6668 10.6667 12.0699 10.6667 11.3335V4.66683C10.6667 3.93045 10.0698 3.3335 9.33342 3.3335Z" stroke="black" />
-                  </svg>
-                </div>
-              </FieldGroup>
-            </div>
-            <p style={{ fontSize: 12, color: '#666666', lineHeight: 1.6, marginBottom: 20 }}>By submitting this form, you confirm that all information provided is accurate and that you have the rights to share the uploaded images. Contact your Artist Relations Manager with any questions.</p>
-            <button className="submit-btn">Submit Profile</button>
-            <div style={{ fontSize: 11, color: '#666666', marginTop: 12 }}>Once submitted, you will be moved to a confirmation screen.</div>
-          </section>
+//           {/* 08 */}
+//           <section id="s8" style={{ marginBottom: 48 }}>
+//             <SectionHeading num="08" title="Videos" />
+//             <FieldGroup label="Video 1" hint="Links to video you would like featured on your artist page. Please list the full URL.">
+//               <div style={{ position: 'relative' }}>
+//                 <input className="field-input" type="url" placeholder="https://youtu.be/... or https://vimeo.com/..." style={{ paddingRight: 36 }} />
+//                 <svg style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', }} width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                   <path d="M15.3334 4.6665L10.6667 7.99984L15.3334 11.3332V4.6665Z" stroke="black" />
+//                   <path d="M9.33342 3.3335H2.00008C1.2637 3.3335 0.666748 3.93045 0.666748 4.66683V11.3335C0.666748 12.0699 1.2637 12.6668 2.00008 12.6668H9.33342C10.0698 12.6668 10.6667 12.0699 10.6667 11.3335V4.66683C10.6667 3.93045 10.0698 3.3335 9.33342 3.3335Z" stroke="black" />
+//                 </svg>              </div>
+//             </FieldGroup>
+//             <div style={{ marginBottom: 35, borderBottom: '1px solid #E8E6E0' }}>
+//               <FieldGroup label="Video 2" hint="Additional video you would like to feature. Please list the full URL.">
+//                 <div style={{ position: 'relative', marginBottom: 32 }}>
+//                   <input className="field-input" type="url" placeholder="https://youtube.com/... or https://vimeo.com/..." style={{ paddingRight: 36 }} />
+//                   <svg style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', }} width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+//                     <path d="M15.3334 4.6665L10.6667 7.99984L15.3334 11.3332V4.6665Z" stroke="black" />
+//                     <path d="M9.33342 3.3335H2.00008C1.2637 3.3335 0.666748 3.93045 0.666748 4.66683V11.3335C0.666748 12.0699 1.2637 12.6668 2.00008 12.6668H9.33342C10.0698 12.6668 10.6667 12.0699 10.6667 11.3335V4.66683C10.6667 3.93045 10.0698 3.3335 9.33342 3.3335Z" stroke="black" />
+//                   </svg>
+//                 </div>
+//               </FieldGroup>
+//             </div>
+//             <p style={{ fontSize: 12, color: '#666666', lineHeight: 1.6, marginBottom: 20 }}>By submitting this form, you confirm that all information provided is accurate and that you have the rights to share the uploaded images. Contact your Artist Relations Manager with any questions.</p>
+//             <button className="submit-btn">Submit Profile</button>
+//             <div style={{ fontSize: 11, color: '#666666', marginTop: 12 }}>Once submitted, you will be moved to a confirmation screen.</div>
+//           </section>
 
-        </main>
-      </div>
-    </>
-  );
-}
+//         </main>
+//       </div>
+//     </>
+//   );
+// }
 
-export default App;
+// export default App;
